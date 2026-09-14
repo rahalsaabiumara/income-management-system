@@ -84,6 +84,10 @@ app.get('/api/me', requireAuth, requireRole('ADMIN', 'KEUANGAN', 'USER'), (req, 
   });
 });
 
+// ── Phase 2 Document Management Routes ───────────────────────────
+import documentRoutes from './routes/documentRoutes.js';
+app.use('/api/documents', documentRoutes);
+
 // ── Auth Routes ────────────────────────────────────────────────
 
 app.get('/api/auth/status', (req, res) => {
