@@ -109,9 +109,10 @@ export function normalizeHeader(header) {
  *
  * @param {string} sheetName — e.g. "LR", "ARUS KAS"
  * @param {object} record — { id, bulan, uraian, subUraian, jenis, value }
+ * @param {string} [document_id] - Optional dokumen id
  * @returns {object} Supabase row object
  */
-function transformRecordForSupabase(sheetName, record) {
+function transformRecordForSupabase(sheetName, record, document_id) {
   const year = extractYearFromId(record.id);
   const bulanDate = normalizeMonthToDate(record.bulan, year);
 
@@ -123,9 +124,11 @@ function transformRecordForSupabase(sheetName, record) {
     value: record.value,
   };
 
-  // PDPT does NOT have sub_uraian
   if (sheetName !== 'PDPT') {
     row.sub_uraian = record.subUraian || null;
+  }
+  if (document_id) {
+    row.document_id = document_id;
   }
 
   return row;
@@ -136,9 +139,10 @@ function transformRecordForSupabase(sheetName, record) {
  *
  * @param {string} sheetName — e.g. "LR", "ARUS KAS"
  * @param {Array<object>} records — Array of pipeline records
+ * @param {string} [document_id]
  * @returns {Promise<object>} Result summary { total, inserted, updated, failed, errors }
  */
-export async function syncRecordsToSupabase(sheetName, records) {
+export async function syncRecordsToSupabase(sheetName, records, document_id) {
   const tableName = SUPABASE_TABLE_MAPPING[sheetName];
   if (!tableName) {
     throw new Error(`Tidak ditemukan mapping Supabase untuk sheet: ${sheetName}`);
@@ -155,7 +159,7 @@ export async function syncRecordsToSupabase(sheetName, records) {
   const transformedRecords = [];
   for (const record of records) {
     try {
-      const transformed = transformRecordForSupabase(sheetName, record);
+      const transformed = transformRecordForSupabase(sheetName, record, document_id);
       transformedRecords.push(transformed);
     } catch (err) {
       result.failed++;
@@ -212,9 +216,10 @@ export async function syncRecordsToSupabase(sheetName, records) {
  * Receives the SAME grouped records object used for Google Sheets sync.
  *
  * @param {object} groupedRecords — { 'LR': [...], 'ARUS KAS': [...], 'NERACA': [...], 'PDPT': [...] }
+ * @param {string} [document_id]
  * @returns {Promise<object>} Overall sync result
  */
-export async function syncAllSheetsToSupabase(groupedRecords) {
+export async function syncAllSheetsToSupabase(groupedRecords, document_id) {
   if (!isSupabaseConfigured()) {
     console.warn('[SupabaseSync] Supabase belum dikonfigurasi. Skip sync.');
     return {
@@ -239,7 +244,7 @@ export async function syncAllSheetsToSupabase(groupedRecords) {
     }
 
     try {
-      const result = await syncRecordsToSupabase(sheetName, records);
+      const result = await syncRecordsToSupabase(sheetName, records, document_id);
       sheetsResult[sheetName] = {
         status: result.failed > 0 ? 'PARTIAL_SUCCESS' : 'SUCCESS',
         ...result,

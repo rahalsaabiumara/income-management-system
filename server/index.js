@@ -192,6 +192,26 @@ app.post('/api/sync', async (req, res) => {
 });
 
 /**
+ * POST /api/process-report — Process report and send
+ */
+app.post('/api/process-report', async (req, res) => {
+  try {
+    const report = req.body;
+    const { document_id } = report;
+
+    if (!report.fileId) {
+      return res.status(400).json({ error: 'fileId is required' });
+    }
+
+    const result = await processAndSendReport(report, document_id);
+    res.json(result);
+  } catch (err) {
+    console.error('[/api/process-report] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /api/import-csv — Upload a CSV file to replace local Master data.
  *
  * Expected CSV columns: Tanggal, Nama, File [, Nama Standar (ignored)]

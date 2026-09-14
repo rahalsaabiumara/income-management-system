@@ -7,6 +7,7 @@ import { validateTabularRecords } from './tabularValidationService.js';
 import { upsertToGoogleSheets } from './googleSheets.js';
 import { syncAllSheetsToSupabase } from './supabaseSyncService.js';
 import { buildUuidMetadata } from './uuidGeneratorService.js';
+import { updateDocumentStatus } from './documentTrackingService.js';
 
 import fs from 'fs';
 import { isSupabaseConfigured } from './supabaseClient.js';
@@ -34,8 +35,9 @@ export function getProcessingStatus(reportId) {
 /**
  * Main pipeline orchestration function.
  * @param {object} report - e.g. { fileId, nama, namaStandar, tanggal, ... }
+ * @param {string} [document_id] - Optional ID dari tabel documents Supabase
  */
-export async function processAndSendReport(report) {
+export async function processAndSendReport(report, document_id) {
   const reportId = report.fileId;
   
   if (processingLocks.has(reportId)) {
@@ -44,6 +46,14 @@ export async function processAndSendReport(report) {
 
   processingLocks.set(reportId, true);
   updateStatus(reportId, 'PROCESSING');
+
+  if (document_id) {
+    try {
+      await updateDocumentStatus(document_id, 'PROCESSING');
+    } catch (err) {
+      console.warn('[Phase3] Gagal update status PROCESSING, lanjutkan proses:', err.message);
+    }
+  }
 
   try {
     // PRE-FETCH EXCEL CACHE
@@ -188,7 +198,7 @@ export async function processAndSendReport(report) {
     if (isSupabaseConfigured()) {
       updateStatus(reportId, 'SYNCING_SUPABASE');
       try {
-        supabaseSyncResult = await syncAllSheetsToSupabase(groupedRecords);
+        supabaseSyncResult = await syncAllSheetsToSupabase(groupedRecords, document_id);
         console.log(`[Processing:${reportId}] Supabase sync: ${supabaseSyncResult.status}`);
       } catch (supabaseErr) {
         console.warn(`[Processing:${reportId}] Supabase sync failed (non-critical):`, supabaseErr.message);
@@ -211,6 +221,14 @@ export async function processAndSendReport(report) {
     // Supabase failure does NOT affect overall pipeline status
     let finalStatus = (invalid.length > 0 || hasFailedSheet) ? 'PARTIAL_SUCCESS' : 'SUCCESS';
     updateStatus(reportId, finalStatus, { summary, unmatched: invalid });
+
+    if (document_id) {
+      try {
+        await updateDocumentStatus(document_id, 'DRAFT_READY');
+      } catch (err) {
+        console.warn('[Phase3] Gagal update status DRAFT_READY, response tetap dikirim:', err.message);
+      }
+    }
 
     return {
       success: true,
