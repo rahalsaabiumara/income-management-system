@@ -137,27 +137,69 @@ export async function getDocumentById(id) {
  * @param {string} status — New status (must be a valid document_status enum value).
  * @returns {Promise<object>} The updated document row.
  */
-export async function updateDocumentStatus(id, status) {
-  if (!VALID_STATUSES.includes(status)) {
-    throw new Error(
-      `Invalid status: "${status}". Must be one of: ${VALID_STATUSES.join(', ')}`
-    );
+export async function updateDocumentStatus(id, newStatus) {
+  if (!VALID_STATUSES.includes(newStatus)) {
+    throw new Error(`Status tidak valid: ${newStatus}`);
   }
 
   const supabase = getClient();
 
   const { data, error } = await supabase
     .from('documents')
-    .update({ status })
+    .update({ status: newStatus, updated_at: new Date().toISOString() })
     .eq('id', id)
     .select()
     .single();
 
   if (error) {
-    console.error('[DocumentTracking] updateDocumentStatus error:', error.message);
-    throw new Error(`Failed to update document status: ${error.message}`);
+    throw new Error(`Gagal update status dokumen: ${error.message}`);
   }
 
+  return data;
+}
+
+/**
+ * PHASE 4: Add a comment to a document.
+ */
+export async function addComment(document_id, user_id, comment) {
+  const supabase = getClient();
+
+  const { data, error } = await supabase
+    .from('comments')
+    .insert([{ document_id, user_id, comment }])
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Gagal menambah komentar: ${error.message}`);
+  }
+  return data;
+}
+
+/**
+ * PHASE 4: List comments for a document.
+ */
+export async function listComments(document_id) {
+  const supabase = getClient();
+
+  const { data, error } = await supabase
+    .from('comments')
+    .select(`
+      id,
+      comment,
+      created_at,
+      user_id,
+      profiles (
+        full_name,
+        role
+      )
+    `)
+    .eq('document_id', document_id)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    throw new Error(`Gagal mengambil komentar: ${error.message}`);
+  }
   return data;
 }
 

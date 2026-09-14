@@ -86,7 +86,14 @@ app.get('/api/me', requireAuth, requireRole('ADMIN', 'KEUANGAN', 'USER'), (req, 
 
 // ── Phase 2 Document Management Routes ───────────────────────────
 import documentRoutes from './routes/documentRoutes.js';
+import pdfProxyRoutes from './routes/pdfProxyRoutes.js';
+
+// Setup Supabase
+initSupabase();
+
+// Mount Routes
 app.use('/api/documents', documentRoutes);
+app.use('/api/documents', pdfProxyRoutes);
 
 // ── Auth Routes ────────────────────────────────────────────────
 

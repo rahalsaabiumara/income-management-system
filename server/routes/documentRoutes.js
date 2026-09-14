@@ -18,6 +18,8 @@ import {
   listDocuments,
   getDocumentById,
   updateDocumentStatus,
+  addComment,
+  listComments,
   VALID_STATUSES,
 } from '../services/documentTrackingService.js';
 
@@ -59,12 +61,12 @@ router.post(
 /**
  * GET /api/documents
  * Query: ?status=UNPROCESSED (optional filter)
- * Role: ADMIN, KEUANGAN
+ * Role: ADMIN, KEUANGAN, USER
  */
 router.get(
   '/',
   requireAuth,
-  requireRole('ADMIN', 'KEUANGAN'),
+  requireRole('ADMIN', 'KEUANGAN', 'USER'),
   async (req, res) => {
     try {
       const { status } = req.query;
@@ -74,6 +76,19 @@ router.get(
         return res.status(400).json({
           error: `Status filter tidak valid: "${status}". Harus salah satu dari: ${VALID_STATUSES.join(', ')}`,
         });
+      }
+
+      // Phase 4: Enforce role USER rules
+      if (req.user.role === 'USER') {
+        const docs = await listDocuments({ status: 'POSTED' });
+        // Strip sensitive fields
+        return res.json(docs.map(d => ({
+          id: d.id,
+          nama: d.nama,
+          status: d.status,
+          created_at: d.created_at,
+          updated_at: d.updated_at
+        })));
       }
 
       const docs = await listDocuments(status ? { status } : {});
@@ -136,6 +151,78 @@ router.put(
       return res.json(doc);
     } catch (err) {
       console.error('[DocumentRoutes] PUT /:id/status error:', err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+/**
+ * POST /api/documents/:id/comments
+ * Body: { comment: string }
+ * Role: KEUANGAN only
+ */
+router.post(
+  '/:id/comments',
+  requireAuth,
+  requireRole('KEUANGAN'),
+  async (req, res) => {
+    try {
+      const { comment } = req.body;
+      if (!comment) {
+        return res.status(400).json({ error: 'Komentar tidak boleh kosong.' });
+      }
+
+      // 1. Add comment
+      const newComment = await addComment(req.params.id, req.user.id, comment);
+
+      // 2. Update status
+      try {
+        await updateDocumentStatus(req.params.id, 'REVISION_REQUESTED');
+      } catch (err) {
+        console.warn('[Phase4] Berhasil tambah komen, tapi gagal update status:', err.message);
+      }
+
+      return res.status(201).json(newComment);
+    } catch (err) {
+      console.error('[DocumentRoutes] POST /:id/comments error:', err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+/**
+ * GET /api/documents/:id/comments
+ * Role: ADMIN, KEUANGAN
+ */
+router.get(
+  '/:id/comments',
+  requireAuth,
+  requireRole('ADMIN', 'KEUANGAN'),
+  async (req, res) => {
+    try {
+      const comments = await listComments(req.params.id);
+      return res.json(comments);
+    } catch (err) {
+      console.error('[DocumentRoutes] GET /:id/comments error:', err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+/**
+ * POST /api/documents/:id/approve
+ * Role: KEUANGAN only
+ */
+router.post(
+  '/:id/approve',
+  requireAuth,
+  requireRole('KEUANGAN'),
+  async (req, res) => {
+    try {
+      const doc = await updateDocumentStatus(req.params.id, 'POSTED');
+      return res.json(doc);
+    } catch (err) {
+      console.error('[DocumentRoutes] POST /:id/approve error:', err.message);
       return res.status(500).json({ error: err.message });
     }
   }

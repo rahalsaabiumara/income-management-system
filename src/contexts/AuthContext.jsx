@@ -48,20 +48,20 @@ export function AuthProvider({ children }) {
    */
   useEffect(() => {
     // 1. Check current session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session?.user) {
         setUser(session.user);
-        fetchRole(session.user.id);
+        await fetchRole(session.user.id);
       }
       setLoading(false);
     });
 
     // 2. Listen for auth state changes (login, logout, token refresh)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      async (_event, session) => {
         if (session?.user) {
           setUser(session.user);
-          fetchRole(session.user.id);
+          await fetchRole(session.user.id);
         } else {
           setUser(null);
           setRole(null);
