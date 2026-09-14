@@ -9,7 +9,7 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
 export default function Login() {
-  const { user, login, signup } = useAuth();
+  const { user, role, login, signup } = useAuth();
   const [isSignup, setIsSignup] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -18,9 +18,11 @@ export default function Login() {
   const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Jika sudah login, langsung alihkan ke rute utama
-  if (user) {
-    return <Navigate to="/dashboard" replace />;
+  // Jika sudah login dan role sudah tersedia, alihkan ke rute yang sesuai
+  if (user && role) {
+    if (role === 'ADMIN') return <Navigate to="/dashboard" replace />;
+    if (role === 'KEUANGAN') return <Navigate to="/dashboard/keuangan" replace />;
+    return <Navigate to="/documents" replace />;
   }
 
   const handleSubmit = async (e) => {

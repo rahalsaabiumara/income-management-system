@@ -36,7 +36,8 @@ export function AuthProvider({ children }) {
         return;
       }
 
-      setRole(data.role);
+      const fetchedRole = data.role ? data.role.toUpperCase() : 'USER';
+      setRole(fetchedRole);
     } catch (err) {
       console.error('[AuthContext] fetchRole error:', err);
       setRole('USER');

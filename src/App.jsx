@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider } from './contexts/AuthContext.jsx';
+import { AuthProvider, useAuth } from './contexts/AuthContext.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Login from './pages/Login.jsx';
 import BIDashboard from './pages/BIDashboard.jsx';
@@ -17,9 +17,24 @@ const queryClient = new QueryClient({
   },
 });
 
+function RootRedirect() {
+  const { user, role, loading } = useAuth();
+  
+  if (loading) return null;
+  
+  if (!user) return <Navigate to="/login" replace />;
+  
+  if (role === 'ADMIN') return <Navigate to="/dashboard" replace />;
+  if (role === 'KEUANGAN') return <Navigate to="/dashboard/keuangan" replace />;
+  return <Navigate to="/documents" replace />;
+}
+
 function AppRoutes() {
   return (
     <Routes>
+      {/* Smart Root Route */}
+      <Route path="/" element={<RootRedirect />} />
+
       {/* Public Route */}
       <Route path="/login" element={<Login />} />
 
@@ -45,8 +60,8 @@ function AppRoutes() {
         <Route path="/documents" element={<DocumentViewer />} />
       </Route>
 
-      {/* Redirect all unmatched routes to /dashboard (which will then re-route based on roles) */}
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      {/* Redirect all unmatched routes to root */}
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
