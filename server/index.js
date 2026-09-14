@@ -66,6 +66,24 @@ try {
   console.warn('[Server] Google services not available:', err.message);
 }
 
+// ── Phase 1 RBAC Middlewares ─────────────────────────────────────
+import { requireAuth } from './middlewares/auth.js';
+import { requireRole } from './middlewares/role.js';
+
+/**
+ * GET /api/me — Return the authenticated user's profile (id, email, role).
+ * Protected by Supabase Auth JWT verification.
+ * This is the ONLY new endpoint added in Phase 1.
+ */
+app.get('/api/me', requireAuth, requireRole('ADMIN', 'KEUANGAN', 'USER'), (req, res) => {
+  res.json({
+    id: req.user.id,
+    email: req.user.email,
+    role: req.user.role,
+    fullName: req.user.fullName || null,
+  });
+});
+
 // ── Auth Routes ────────────────────────────────────────────────
 
 app.get('/api/auth/status', (req, res) => {
@@ -935,6 +953,7 @@ app.listen(PORT, () => {
   console.log(`\n🚀 LM Manager API running on http://localhost:${PORT}`);
   console.log(`   Google services: ${isAuthReady() ? '✅ Ready' : '❌ Not Authenticated (Please login)'}`);
   console.log(`   Endpoints:`);
+  console.log(`     GET  /api/me`);
   console.log(`     GET  /api/master`);
   console.log(`     POST /api/sync`);
   console.log(`     POST /api/import-csv`);
