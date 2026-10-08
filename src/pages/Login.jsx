@@ -1,12 +1,31 @@
 /**
- * Login.jsx — Email/password login page for LM Manager V2.
+ * Login.jsx — Email/password login page for Income Statement V2.
  *
  * Uses Supabase Auth (NOT Google OAuth — that remains separate for Drive/Sheets).
  * Supports both login and signup modes.
+ *
+ * Layering (bottom → top):
+ *   z-0  : animated green gradient (.dynamic-bg, see index.css)
+ *   z-10 : floating "firefly" particles (@tsparticles, pointer-events-none)
+ *   z-20 : glassmorphism login card
  */
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
+import Particles, { initParticlesEngine } from '@tsparticles/react';
+import { loadSlim } from '@tsparticles/slim';
 import { useAuth } from '../contexts/AuthContext.jsx';
+
+// TODO: Replace with actual path (background photo shown on the left side of the card)
+const CARD_BG_IMAGE = '/bg-login.jpg';
+// TODO: Replace with actual path (company logo)
+const LOGO_SRC = '/logo.png';
+
+const inputClass =
+  'w-full px-4 py-3 rounded-lg border border-gray-200 bg-gray-100 text-gray-900 text-sm ' +
+  'placeholder:text-gray-400 transition-all duration-200 ' +
+  'focus:ring-2 focus:ring-green-500 focus:outline-none focus:border-transparent focus:bg-white';
+
+const labelClass = 'block text-xs font-bold text-gray-700 mb-1.5 uppercase tracking-wider';
 
 export default function Login() {
   const { user, role, login, signup } = useAuth();
@@ -17,12 +36,49 @@ export default function Login() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [particlesReady, setParticlesReady] = useState(false);
+
+  // Initialise the tsParticles engine once (slim bundle)
+  useEffect(() => {
+    let cancelled = false;
+    initParticlesEngine(async (engine) => {
+      await loadSlim(engine);
+    }).then(() => {
+      if (!cancelled) setParticlesReady(true);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Subtle fireflies / light-green dust drifting upwards
+  const particlesOptions = useMemo(() => ({
+    fullScreen: { enable: false },
+    background: { color: { value: 'transparent' } },
+    fpsLimit: 60,
+    detectRetina: true,
+    particles: {
+      number: { value: 35, density: { enable: true, width: 1200, height: 800 } },
+      color: { value: ['#bbf7d0', '#86efac', '#d9f99d'] },
+      shape: { type: 'circle' },
+      opacity: {
+        value: { min: 0.1, max: 0.45 },
+        animation: { enable: true, speed: 0.6, sync: false },
+      },
+      size: { value: { min: 1, max: 3.5 } },
+      move: {
+        enable: true,
+        direction: 'top',
+        speed: { min: 0.2, max: 0.7 },
+        straight: false,
+        random: true,
+        outModes: { default: 'out' },
+      },
+    },
+    interactivity: { events: { onHover: { enable: false }, onClick: { enable: false } } },
+  }), []);
 
   // Jika sudah login dan role sudah tersedia, alihkan ke rute yang sesuai
   if (user && role) {
-    if (role === 'ADMIN') return <Navigate to="/dashboard" replace />;
-    if (role === 'KEUANGAN') return <Navigate to="/dashboard/keuangan" replace />;
-    return <Navigate to="/documents" replace />;
+    return <Navigate to="/bi-dashboard" replace />;
   }
 
   const handleSubmit = async (e) => {
@@ -48,152 +104,183 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-surface-50 dark:bg-surface-950 px-4">
-      <div className="w-full max-w-md">
-        {/* Logo / Header */}
-        <div className="text-center mb-8">
-          <div className="mx-auto w-14 h-14 rounded-2xl bg-gradient-to-br from-brand-400 to-brand-600
-                          flex items-center justify-center shadow-lg shadow-brand-500/20 mb-4">
-            <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold text-surface-900 dark:text-surface-100">
-            LM Manager
-          </h1>
-          <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">
-            {isSignup ? 'Buat akun baru' : 'Masuk ke akun Anda'}
-          </p>
-        </div>
+    <main className="relative w-screen min-h-screen overflow-hidden">
+      {/* z-0: animated gradient */}
+      <div className="dynamic-bg absolute inset-0 z-0" aria-hidden="true" />
 
-        {/* Form Card */}
-        <div className="bg-white dark:bg-surface-900 rounded-2xl shadow-xl shadow-surface-200/50 dark:shadow-surface-950/50
-                        border border-surface-200 dark:border-surface-800 p-8">
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {/* Full Name (signup only) */}
-            {isSignup && (
+      {/* z-10: floating particles (never blocks clicks) */}
+      {particlesReady && (
+        <Particles
+          id="login-particles"
+          options={particlesOptions}
+          className="absolute inset-0 z-10 pointer-events-none"
+          style={{ position: 'absolute', inset: 0 }}
+        />
+      )}
+
+      {/* z-20: glass card */}
+      <div className="relative z-20 min-h-screen flex items-center justify-center p-4 sm:p-8">
+        <div className="w-full max-w-4xl md:flex rounded-3xl overflow-hidden bg-white/85 backdrop-blur-md
+                        border border-white/40 shadow-2xl">
+
+          {/* Left column: visual & branding (desktop only) */}
+          <section className="hidden md:block w-1/2 relative overflow-hidden">
+            <img
+              src={CARD_BG_IMAGE}
+              alt="Perkebunan teh PT LPP Agro Nusantara"
+              className="object-cover w-full h-full absolute inset-0 z-0"
+            />
+            <div className="absolute inset-0 z-10 bg-green-900/30 mix-blend-multiply" />
+            <div className="absolute inset-0 z-20 bg-gradient-to-t from-green-950/60 via-transparent to-green-950/20" />
+            <div className="relative z-20 h-full min-h-[560px] flex flex-col items-center justify-center text-center px-8">
+              <img
+                src={LOGO_SRC}
+                alt="Logo LPP Agro Nusantara"
+                className="w-24 h-24 mb-4 object-contain drop-shadow-lg"
+              />
+              <h2 className="text-white font-bold text-2xl tracking-wide drop-shadow-md">
+                PT LPP AGRO NUSANTARA
+              </h2>
+              <p
+                className="mt-2 text-s text-white/90 drop-shadow-md tracking-wider"
+                style={{ fontFamily: "'Great Vibes', cursive" }}
+              >
+                Always Become Your Excellent Partner
+              </p>
+            </div>
+          </section>
+
+          {/* Right column: login form */}
+          <section className="w-full md:w-1/2 p-10 md:p-12 flex flex-col justify-center bg-transparent">
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">
+              {isSignup ? 'Buat Akun!' : 'Selamat Datang!'}
+            </h1>
+            <p className="text-sm text-gray-500 mb-8 leading-relaxed">
+              {isSignup
+                ? 'Lengkapi data di bawah ini untuk membuat akun baru.'
+                : 'Selamat datang di Income Statement LPP Agro Nusantara, silakan masuk ke akun Anda.'}
+            </p>
+
+            <form onSubmit={handleSubmit} className="space-y-5">
+              {/* Full Name (signup only) */}
+              {isSignup && (
+                <div>
+                  <label htmlFor="fullName" className={labelClass}>Nama Lengkap</label>
+                  <input
+                    id="fullName"
+                    type="text"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    className={inputClass}
+                    placeholder="Nama Anda"
+                  />
+                </div>
+              )}
+
+              {/* Email */}
               <div>
-                <label htmlFor="fullName" className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">
-                  Nama Lengkap
-                </label>
+                <label htmlFor="email" className={labelClass}>Email</label>
                 <input
-                  id="fullName"
-                  type="text"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-surface-300 dark:border-surface-700
-                             bg-surface-50 dark:bg-surface-800 text-surface-900 dark:text-surface-100
-                             focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent
-                             transition-all duration-200"
-                  placeholder="Nama Anda"
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  className={inputClass}
+                  placeholder="email@contoh.com"
                 />
               </div>
-            )}
 
-            {/* Email */}
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className="w-full px-4 py-2.5 rounded-xl border border-surface-300 dark:border-surface-700
-                           bg-surface-50 dark:bg-surface-800 text-surface-900 dark:text-surface-100
-                           focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent
-                           transition-all duration-200"
-                placeholder="email@contoh.com"
-              />
+              {/* Password */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label htmlFor="password" className="text-xs font-bold text-gray-700 uppercase tracking-wider">
+                    Password
+                  </label>
+                  {!isSignup && (
+                    <button
+                      type="button"
+                      className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 hover:underline"
+                    >
+                      Lupa Password?
+                    </button>
+                  )}
+                </div>
+                <input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  minLength={6}
+                  className={inputClass}
+                  placeholder="Minimal 6 karakter"
+                />
+              </div>
+
+              {/* Error Message */}
+              {error && (
+                <div className="px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700 flex items-center gap-2.5">
+                  <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {error}
+                </div>
+              )}
+
+              {/* Success Message */}
+              {success && (
+                <div className="px-4 py-3 rounded-lg bg-green-50 border border-green-200 text-sm text-green-700 flex items-center gap-2.5">
+                  <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {success}
+                </div>
+              )}
+
+              {/* Submit */}
+              <button
+                type="submit"
+                disabled={submitting}
+                className="w-full py-3 rounded-lg text-sm font-bold text-white
+                           bg-gradient-to-r from-green-700 to-green-600
+                           hover:shadow-lg hover:shadow-green-700/30 hover:scale-[1.02]
+                           active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100
+                           transition-transform duration-200"
+              >
+                {submitting
+                  ? (isSignup ? 'Membuat akun...' : 'Memproses...')
+                  : (isSignup ? 'Daftar' : 'Login')}
+              </button>
+            </form>
+
+            {/* Divider */}
+            <div className="mt-8 flex items-center gap-4" role="separator">
+              <div className="h-px flex-1 bg-gray-300/70" />
+              <span className="text-[11px] font-semibold text-gray-400 tracking-widest">ATAU</span>
+              <div className="h-px flex-1 bg-gray-300/70" />
             </div>
 
-            {/* Password */}
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">
-                Password
-              </label>
-              <input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                minLength={6}
-                className="w-full px-4 py-2.5 rounded-xl border border-surface-300 dark:border-surface-700
-                           bg-surface-50 dark:bg-surface-800 text-surface-900 dark:text-surface-100
-                           focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent
-                           transition-all duration-200"
-                placeholder="Minimal 6 karakter"
-              />
-            </div>
-
-            {/* Error Message */}
-            {error && (
-              <div className="px-4 py-3 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800
-                              text-sm text-red-700 dark:text-red-300 flex items-center gap-2">
-                <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                {error}
-              </div>
-            )}
-
-            {/* Success Message */}
-            {success && (
-              <div className="px-4 py-3 rounded-xl bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800
-                              text-sm text-green-700 dark:text-green-300 flex items-center gap-2">
-                <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                {success}
-              </div>
-            )}
-
-            {/* Submit */}
-            <button
-              type="submit"
-              disabled={submitting}
-              className="w-full py-3 rounded-xl text-sm font-bold text-white
-                         bg-brand-600 hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed
-                         shadow-md shadow-brand-500/20 active:scale-[0.98]
-                         transition-all duration-200"
-            >
-              {submitting
-                ? (isSignup ? 'Membuat akun...' : 'Masuk...')
-                : (isSignup ? 'Daftar' : 'Masuk')
-              }
-            </button>
-          </form>
-
-          {/* Toggle login/signup */}
-          <div className="mt-6 text-center">
-            <p className="text-sm text-surface-500 dark:text-surface-400">
+            {/* Toggle login/signup */}
+            <p className="mt-5 text-center text-sm text-gray-600">
               {isSignup ? 'Sudah punya akun?' : 'Belum punya akun?'}{' '}
               <button
+                type="button"
                 onClick={() => {
                   setIsSignup(!isSignup);
                   setError('');
                   setSuccess('');
                 }}
-                className="font-semibold text-brand-600 dark:text-brand-400 hover:text-brand-700
-                           dark:hover:text-brand-300 transition-colors"
+                className="font-bold text-green-700 hover:underline"
               >
-                {isSignup ? 'Masuk' : 'Daftar'}
+                {isSignup ? 'Masuk' : 'Daftar di sini'}
               </button>
             </p>
-          </div>
+          </section>
         </div>
-
-        {/* Footer */}
-        <p className="text-center text-xs text-surface-400 dark:text-surface-500 mt-6">
-          LM Manager — Sistem Otomasi Laporan Manajemen
-        </p>
       </div>
-    </div>
+    </main>
   );
 }

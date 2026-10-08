@@ -40,13 +40,13 @@ export default function DocumentViewer() {
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      
+
       const pdfRes = await fetch(`http://localhost:3001/api/documents/${doc.id}/view-pdf`, {
         headers: { Authorization: `Bearer ${session.access_token}` }
       });
-      
+
       if (!pdfRes.ok) throw new Error('Gagal memuat PDF');
-      
+
       const blob = await pdfRes.blob();
       const url = URL.createObjectURL(blob);
       setPdfUrl(url);
@@ -83,8 +83,8 @@ export default function DocumentViewer() {
             ) : (
               <ul className="divide-y">
                 {documents.map(doc => (
-                  <li 
-                    key={doc.id} 
+                  <li
+                    key={doc.id}
                     onClick={() => handleSelectDoc(doc)}
                     className={`p-4 cursor-pointer hover:bg-brand-50 transition-colors ${selectedDoc?.id === doc.id ? 'bg-brand-50 border-l-4 border-brand-500' : ''}`}
                   >

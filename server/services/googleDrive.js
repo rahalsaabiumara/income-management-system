@@ -43,6 +43,8 @@ export async function listFilesInFolder(folderId) {
       pageSize: 100,
       pageToken,
       orderBy: 'name',
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
     });
 
     files.push(...(res.data.files || []));
@@ -121,6 +123,7 @@ export async function copyFileToFolder(sourceFileId, targetFolderId, newName) {
     fileId: sourceFileId,
     requestBody,
     fields: 'id, name, webViewLink',
+    supportsAllDrives: true,
   });
 
   return res.data;
@@ -156,6 +159,7 @@ export async function uploadFileToFolder(buffer, filename, targetFolderId, mimeT
     requestBody,
     media,
     fields: 'id, name, webViewLink',
+    supportsAllDrives: true,
   });
 
   return res.data;

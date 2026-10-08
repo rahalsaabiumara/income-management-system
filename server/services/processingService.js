@@ -16,8 +16,8 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const EXCEL_CACHE_DIR = path.join(__dirname, '../data', 'excel-cache');
-const TABULAR_DATA_DIR = path.join(__dirname, '../data', 'tabular');
+const EXCEL_CACHE_DIR = process.env.VERCEL ? path.join('/tmp', 'excel-cache') : path.join(__dirname, '../data', 'excel-cache');
+const TABULAR_DATA_DIR = process.env.VERCEL ? path.join('/tmp', 'tabular') : path.join(__dirname, '../data', 'tabular');
 
 const processingLocks = new Map();
 const processingStatuses = new Map();
@@ -30,6 +30,87 @@ function updateStatus(reportId, status, details = {}) {
 
 export function getProcessingStatus(reportId) {
   return processingStatuses.get(reportId) || { status: 'IDLE' };
+}
+
+export { EXCEL_CACHE_DIR };
+
+/**
+ * Extraction-only pipeline: PDF → Excel Cache.
+ * Does NOT send data to Tabular, Google Sheets, or Supabase.
+ * Sets document status to DRAFT_READY when done.
+ *
+ * @param {object} report - { fileId, nama, namaStandar, tanggal, ... }
+ * @param {string} [document_id] - Optional Supabase document UUID
+ */
+export async function extractToExcelCache(report, document_id) {
+  const reportId = report.fileId;
+
+  if (processingLocks.has(reportId)) {
+    throw new Error('Report is already being processed');
+  }
+
+  processingLocks.set(reportId, true);
+  updateStatus(reportId, 'PROCESSING');
+
+  if (document_id) {
+    try { await updateDocumentStatus(document_id, 'PROCESSING'); } catch (e) {
+      console.warn('[extractToExcelCache] Gagal update status PROCESSING:', e.message);
+    }
+  }
+
+  try {
+    const excelPath = path.join(EXCEL_CACHE_DIR, `${reportId}.xlsx`);
+
+    if (!fs.existsSync(excelPath)) {
+      updateStatus(reportId, 'CONVERTING');
+
+      const info = await findTabelLMPages(reportId);
+      if (!info.detected) throw new Error('Halaman target Tabel LM tidak terdeteksi.');
+
+      const pagePdfs = {};
+      for (const [tableType, pageNum] of Object.entries(info.pages)) {
+        if (pageNum) pagePdfs[tableType] = await extractSinglePagePdf(reportId, pageNum);
+      }
+
+      let tables = await extractAllTables(pagePdfs);
+      for (const key of Object.keys(tables)) {
+        if (!tables[key] || !tables[key].rows || tables[key].rows.length === 0) delete tables[key];
+      }
+      if (Object.keys(tables).length === 0) throw new Error('Tidak ada tabel yang berhasil diekstrak.');
+
+      const validation = validateAllTables(tables);
+      const metadata = {
+        nama: report.namaStandar || report.nama || '',
+        companyName: 'PT LPP AGRO NUSANTARA',
+        period: report.namaStandar || report.nama || '',
+      };
+
+      updateStatus(reportId, 'SAVING_EXCEL');
+      const excelBuffer = writeExcelFromTemplate(tables, validation, metadata);
+      if (!fs.existsSync(EXCEL_CACHE_DIR)) fs.mkdirSync(EXCEL_CACHE_DIR, { recursive: true });
+      fs.writeFileSync(excelPath, excelBuffer);
+    } else {
+      console.log(`[extractToExcelCache:${reportId}] Using cached Excel file.`);
+    }
+
+    updateStatus(reportId, 'DRAFT_READY');
+
+    if (document_id) {
+      try { await updateDocumentStatus(document_id, 'DRAFT_READY'); } catch (e) {
+        console.warn('[extractToExcelCache] Gagal update status DRAFT_READY:', e.message);
+      }
+    }
+
+    return { success: true, status: 'DRAFT_READY', excelFile: `${reportId}.xlsx` };
+  } catch (err) {
+    updateStatus(reportId, 'FAILED', { error: err.message });
+    if (document_id) {
+      try { await updateDocumentStatus(document_id, 'UNPROCESSED'); } catch (_) {}
+    }
+    throw err;
+  } finally {
+    processingLocks.delete(reportId);
+  }
 }
 
 /**

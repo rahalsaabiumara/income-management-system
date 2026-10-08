@@ -18,10 +18,10 @@ const cache = new Map();
 
 // Target table keywords — order is display order
 const TARGET_TABLES = [
-  { type: 'PDPT',     keyword: /tabel\s*[12][\s.:]+pendapatan|tabel\s+pendapatan/i, label: 'Tabel Pendapatan' },
-  { type: 'LR',       keyword: /lampiran\s*1\b/i,                                label: 'Lampiran 1 (Laba Rugi)' },
-  { type: 'NERACA',   keyword: /lampiran\s*2\b/i,                                label: 'Lampiran 2 (Neraca)' },
-  { type: 'ARUS_KAS', keyword: /lampiran\s*3\b/i,                                label: 'Lampiran 3 (Arus Kas)' },
+  { type: 'PDPT',     keyword: /tabel\s*[12][\s.:]+pendapatan|tabel\s+pendapatan/i, keywordNoSpace: /tabel[12][.:]?pendapatan|tabelpendapatan/i, label: 'Tabel Pendapatan' },
+  { type: 'LR',       keyword: /lampiran\s*1\b/i, keywordNoSpace: /lampiran1/i, label: 'Lampiran 1 (Laba Rugi)' },
+  { type: 'NERACA',   keyword: /lampiran\s*2\b/i, keywordNoSpace: /lampiran2/i, label: 'Lampiran 2 (Neraca)' },
+  { type: 'ARUS_KAS', keyword: /lampiran\s*3\b/i, keywordNoSpace: /lampiran3/i, label: 'Lampiran 3 (Arus Kas)' },
 ];
 
 /**
@@ -31,7 +31,9 @@ const TARGET_TABLES = [
  */
 async function ensurePdfCached(fileId) {
   if (cache.has(fileId)) return cache.get(fileId).pdfBuffer;
+  
   const pdfBuffer = await downloadFile(fileId);
+  
   cache.set(fileId, { pdfBuffer, pages: null });
   return pdfBuffer;
 }
@@ -73,14 +75,18 @@ export async function findTabelLMPages(fileId) {
     const page = await pdf.getPage(i);
     const textContent = await page.getTextContent();
     const text = textContent.items.map(item => item.str).join(' ');
+    const textNoSpace = text.replace(/\s+/g, '');
 
     for (const target of TARGET_TABLES) {
       // Only take the FIRST match for each keyword
-      if (!foundPages[target.type] && target.keyword.test(text)) {
-        foundPages[target.type] = i;
-        const detail = details.find(d => d.type === target.type);
-        if (detail) detail.page = i;
-        console.log(`[TabelLM] Found "${target.label}" on page ${i}`);
+      if (!foundPages[target.type]) {
+        const isMatch = target.keyword.test(text) || (target.keywordNoSpace && target.keywordNoSpace.test(textNoSpace));
+        if (isMatch) {
+          foundPages[target.type] = i;
+          const detail = details.find(d => d.type === target.type);
+          if (detail) detail.page = i;
+          console.log(`[TabelLM] Found "${target.label}" on page ${i}`);
+        }
       }
     }
 

@@ -1,198 +1,314 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext.jsx';
-import { supabase } from '../supabase.js';
-import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
-} from 'recharts';
+import { useSearchParams, useOutletContext } from 'react-router-dom';
+import SectionCashFlow from '../components/bi/SectionCashFlow.jsx';
+import SectionProfitLoss from '../components/bi/SectionProfitLoss.jsx';
+import SectionBalanceSheet from '../components/bi/SectionBalanceSheet.jsx';
+import SectionRevenue from '../components/bi/SectionRevenue.jsx';
+import { fetchBothJenis } from '../lib/bi/dataAccess.js';
+import { buildDashboardViewModel } from '../lib/bi/viewModel.js';
+import { mapAllSections } from '../lib/bi/mapping.js';
+import { deduplicateRecords } from '../lib/bi/validation.js';
+import useBIFilters from '../hooks/useBIFilters.js';
+import { resolveDashboardSection } from '../lib/bi/constants.js';
 
+/**
+ * BI Dashboard — Main Page Orchestrator.
+ * Section is driven by ?section= query param (controlled by sidebar).
+ * Year/mode/month filters are driven by URL query params via useBIFilters hook.
+ */
 export default function BIDashboard() {
-  const { logout, role } = useAuth();
-  const [activeTab, setActiveTab] = useState('LR');
+  const { user, role, fullName } = useAuth();
+  const [searchParams] = useSearchParams();
+
+  // Section from URL param (missing / invalid → first entry of DASHBOARD_SECTIONS)
+  const activeTab = resolveDashboardSection(searchParams.get('section')).tab;
+
+  // State
   const [loading, setLoading] = useState(true);
-  const [data, setData] = useState({ LR: [], CF: [], BS: [], REV: [] });
+  const [error, setError] = useState(null);
+  const [realisasiRaw, setRealisasiRaw] = useState(null);
+  const [rkapRaw, setRkapRaw] = useState(null);
 
+  // Available years (set from data)
+  const [availableYears, setAvailableYears] = useState([new Date().getFullYear()]);
+
+  // Derive latest month from data (for YTD default)
+  const [latestMonth, setLatestMonth] = useState(8);
+
+  // Global filters from URL
+  const biFilters = useBIFilters({ availableYears, latestMonth });
+  const { year: selectedYear, mode, month: ytdMonth, setYear: setSelectedYear, setMode } = biFilters;
+
+  // Search term from AppShell (shared with Topbar)
+  const { searchTerm, setBIFilters } = useOutletContext() || {};
+
+  // Register biFilters with AppShell so Topbar can render controls
   useEffect(() => {
-    async function fetchData() {
-      setLoading(true);
-      try {
-        // Query all 4 tables. 
-        // Thanks to RLS, Supabase only returns rows linked to POSTED documents.
-        const [lrRes, cfRes, bsRes, revRes] = await Promise.all([
-          supabase.from('laba_rugi').select('bulan, uraian, value').order('bulan', { ascending: true }),
-          supabase.from('arus_kas').select('bulan, uraian, value').order('bulan', { ascending: true }),
-          supabase.from('neraca').select('bulan, uraian, value').order('bulan', { ascending: true }),
-          supabase.from('pendapatan').select('bulan, uraian, value').order('bulan', { ascending: true }),
-        ]);
+    if (setBIFilters) setBIFilters(biFilters);
+    return () => { if (setBIFilters) setBIFilters(null); };
+  }, [setBIFilters, biFilters]);
 
-        if (lrRes.error) console.error('LR Error:', lrRes.error);
-        
-        setData({
-          LR: lrRes.data || [],
-          CF: cfRes.data || [],
-          BS: bsRes.data || [],
-          REV: revRes.data || [],
+  // Derived View Model (from Realisasi data)
+  const [viewModel, setViewModel] = useState(null);
+
+  // Mapped & deduped records for multi-year helpers
+  const [sectionRecords, setSectionRecords] = useState({ realisasi: {}, rkap: {} });
+
+  // Chart row element (callback ref → the observer re-attaches after loading
+  // and on section switch, when the sticky chart row is re-mounted)
+  const [chartRowEl, setChartRowEl] = useState(null);
+  // Chart collapse state
+  const [chartsCollapsed, setChartsCollapsed] = useState(false);
+  // Viewport height check
+  const [isShortViewport, setIsShortViewport] = useState(false);
+
+  // Determine if charts should be sticky (not on short viewports)
+  const chartSticky = !isShortViewport && !chartsCollapsed;
+
+  // Measure the sticky chart row (border-box = card + the --card-gap strips above
+  // and below it) and expose it as --chart-row-h for the table header offset.
+  // Not sticky → 0, so the table header sticks right under the top bar.
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!chartRowEl || !chartSticky) {
+      root.style.setProperty('--chart-row-h', '0px');
+      return undefined;
+    }
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const h = entry.borderBoxSize?.[0]?.blockSize ?? entry.target.getBoundingClientRect().height;
+        // ceil: never leave a sub-pixel slit between the chart row and the table header
+        root.style.setProperty('--chart-row-h', `${Math.ceil(h)}px`);
+      }
+    });
+    observer.observe(chartRowEl);
+    return () => { observer.disconnect(); root.style.setProperty('--chart-row-h', '0px'); };
+  }, [chartRowEl, chartSticky]);
+
+  // Viewport height check
+  useEffect(() => {
+    const check = () => setIsShortViewport(window.innerHeight < 800);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
+
+  // Fetch both jenis on mount
+  useEffect(() => {
+    async function loadData() {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const { realisasi, rkap, years } = await fetchBothJenis();
+
+        setRealisasiRaw(realisasi);
+        setRkapRaw(rkap);
+
+        if (years.length > 0) {
+          setAvailableYears(years);
+          // Derive latest month from data (raw data uses 'bulan' format 'YYYYMM')
+          const latestYear = years[0];
+          let maxMonth = 1;
+          for (const sectionKey of ['LR', 'CF', 'BS', 'REV']) {
+            if (Array.isArray(realisasi[sectionKey])) {
+              for (const r of realisasi[sectionKey]) {
+                if (r.bulan && String(r.bulan).startsWith(String(latestYear))) {
+                  const m = parseInt(String(r.bulan).slice(4, 6), 10);
+                  if (m >= 1 && m <= 12 && m > maxMonth) {
+                    maxMonth = m;
+                  }
+                }
+              }
+            }
+          }
+          setLatestMonth(maxMonth);
+        }
+
+        // Map & dedupe both datasets for multi-year helpers
+        const mapAndDedupe = (rawData) => {
+          const mapped = mapAllSections(rawData);
+          const result = {};
+          for (const [key, { mapped: m }] of Object.entries(mapped)) {
+            const { deduped } = deduplicateRecords(m);
+            result[key] = deduped;
+          }
+          return result;
+        };
+
+        setSectionRecords({
+          realisasi: mapAndDedupe(realisasi),
+          rkap: mapAndDedupe(rkap),
         });
+
       } catch (err) {
-        console.error('Error fetching BI data:', err);
+        console.error("Failed to fetch BI data:", err);
+        setError(err.message);
       } finally {
         setLoading(false);
       }
     }
 
-    fetchData();
+    loadData();
   }, []);
 
-  // Helper to aggregate data by month for charting
-  const processChartData = (tableData) => {
-    const grouped = {};
-    tableData.forEach(row => {
-      const month = row.bulan.substring(0, 7); // YYYY-MM
-      if (!grouped[month]) grouped[month] = { name: month, total: 0 };
-      // Just a simple heuristic: sum up absolute values or specific key metrics
-      // In a real app we'd filter for "LABA BERSIH" or similar. Here we'll sum top level positive values.
-      grouped[month].total += Math.abs(row.value || 0);
-    });
-    return Object.values(grouped).sort((a, b) => a.name.localeCompare(b.name));
-  };
-
-  const currentData = useMemo(() => {
-    switch (activeTab) {
-      case 'LR': return data.LR;
-      case 'CF': return data.CF;
-      case 'BS': return data.BS;
-      case 'REV': return data.REV;
-      default: return [];
+  // Rebuild view model when filters or raw data change
+  useEffect(() => {
+    if (!realisasiRaw) return;
+    try {
+      const vm = buildDashboardViewModel(realisasiRaw, selectedYear, mode);
+      setViewModel(vm);
+    } catch (err) {
+      console.error("Error building view model:", err);
+      setError("Gagal memproses data visualisasi.");
     }
-  }, [activeTab, data]);
+  }, [realisasiRaw, selectedYear, mode]);
 
-  const chartData = useMemo(() => processChartData(currentData), [currentData]);
+  if (loading && !viewModel) {
+    return (
+      <div className="flex-1 flex items-center justify-center py-20">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#2FA84A] mx-auto"></div>
+          <p className="text-gray-500 mt-4 text-sm">Memuat data dashboard...</p>
+        </div>
+      </div>
+    );
+  }
 
-  const isEmpty = Object.values(data).every(arr => arr.length === 0);
+  if (error) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-4">
+        <div className="bg-white p-6 rounded-xl border border-red-200 text-center max-w-md w-full shadow-sm">
+          <div className="text-red-500 mb-4">
+            <svg className="w-12 h-12 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-bold text-gray-900 mb-2">Gagal Memuat Data</h3>
+          <p className="text-gray-600 mb-4">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-[#2FA84A] text-white rounded-lg hover:bg-[#268F3E] transition-colors"
+          >
+            Coba Lagi
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Get the correct records for active section
+  const getRecords = (sectionKey) => sectionRecords.realisasi[sectionKey] || [];
+  const getRkapRecords = (sectionKey) => sectionRecords.rkap[sectionKey] || [];
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
-      <header className="bg-white shadow-sm border-b px-6 py-4 flex justify-between items-center">
-        <div>
-          <h1 className="text-xl font-bold text-gray-800">BI Dashboard</h1>
-          <p className="text-xs text-gray-500">Anda login sebagai: <span className="font-semibold text-brand-600">{role}</span></p>
+    <main className="flex-1 w-full mx-auto px-4 sm:px-6 pb-12">
+
+      {/* Loading overlay for filter changes */}
+      {loading && (
+        <div className="fixed top-16 right-6 z-50 bg-white shadow-lg rounded-full px-4 py-2 flex items-center space-x-2 border border-gray-100">
+          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#2FA84A]"></div>
+          <span className="text-sm font-medium text-gray-600">Memperbarui...</span>
         </div>
-        <button onClick={logout} className="text-sm font-semibold text-red-600 bg-red-50 px-4 py-2 rounded-lg">Logout</button>
-      </header>
+      )}
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6">
-        {loading ? (
-          <div className="flex flex-col items-center justify-center h-64 text-brand-600">
-            <svg className="animate-spin h-8 w-8 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <p className="font-medium">Memuat data finansial...</p>
-          </div>
-        ) : isEmpty ? (
-          <div className="bg-white border rounded-2xl p-12 text-center shadow-sm mt-10">
-            <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-10 h-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
+      {/* Content Area */}
+      {viewModel && (
+        <div className="animate-fade-in">
+          {activeTab === 'CF' && (
+            <SectionCashFlow
+              data={viewModel.cashFlow}
+              allRecords={getRecords('CF')}
+              rkapRecords={getRkapRecords('CF')}
+              years={availableYears}
+              selectedYear={selectedYear}
+              onYearChange={setSelectedYear}
+              searchTerm={searchTerm}
+              mode={mode}
+              onModeChange={setMode}
+              ytdMonth={ytdMonth}
+              onYtdMonthChange={biFilters.setMonth}
+              chartRowRef={setChartRowEl}
+              chartsCollapsed={chartsCollapsed}
+              onToggleCharts={() => setChartsCollapsed(c => !c)}
+              chartSticky={chartSticky}
+              isShortViewport={isShortViewport}
+            />
+          )}
+          {activeTab === 'LR' && (
+            <SectionProfitLoss
+              data={viewModel.profitLoss}
+              allRecords={getRecords('LR')}
+              rkapRecords={getRkapRecords('LR')}
+              years={availableYears}
+              selectedYear={selectedYear}
+              onYearChange={setSelectedYear}
+              searchTerm={searchTerm}
+              mode={mode}
+              onModeChange={setMode}
+              ytdMonth={ytdMonth}
+              onYtdMonthChange={biFilters.setMonth}
+              chartRowRef={setChartRowEl}
+              chartsCollapsed={chartsCollapsed}
+              onToggleCharts={() => setChartsCollapsed(c => !c)}
+              chartSticky={chartSticky}
+              isShortViewport={isShortViewport}
+            />
+          )}
+          {activeTab === 'BS' && (
+            <SectionBalanceSheet
+              data={viewModel.balanceSheet}
+              allRecords={getRecords('BS')}
+              rkapRecords={getRkapRecords('BS')}
+              years={availableYears}
+              selectedYear={selectedYear}
+              onYearChange={setSelectedYear}
+              searchTerm={searchTerm}
+              mode={mode}
+              onModeChange={setMode}
+              ytdMonth={ytdMonth}
+              onYtdMonthChange={biFilters.setMonth}
+              chartRowRef={setChartRowEl}
+              chartsCollapsed={chartsCollapsed}
+              onToggleCharts={() => setChartsCollapsed(c => !c)}
+              chartSticky={chartSticky}
+              isShortViewport={isShortViewport}
+            />
+          )}
+          {activeTab === 'REV' && (
+            <SectionRevenue
+              data={viewModel.revenue}
+              allRecords={getRecords('REV')}
+              rkapRecords={getRkapRecords('REV')}
+              years={availableYears}
+              selectedYear={selectedYear}
+              onYearChange={setSelectedYear}
+              searchTerm={searchTerm}
+              mode={mode}
+              onModeChange={setMode}
+              ytdMonth={ytdMonth}
+              onYtdMonthChange={biFilters.setMonth}
+              chartRowRef={setChartRowEl}
+              chartsCollapsed={chartsCollapsed}
+              onToggleCharts={() => setChartsCollapsed(c => !c)}
+              chartSticky={chartSticky}
+              isShortViewport={isShortViewport}
+            />
+          )}
+
+          {/* Debug info in development */}
+          {import.meta.env.DEV && viewModel.meta.totalUnmapped > 0 && (
+            <div className="mt-12 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <h4 className="text-sm font-bold text-yellow-800 mb-2">Development Warning: Unmapped Items</h4>
+              <p className="text-xs text-yellow-700">
+                Terdapat {viewModel.meta.totalUnmapped} record yang tidak memiliki mapping (lihat console).
+              </p>
             </div>
-            <h2 className="text-xl font-bold text-gray-700">Belum ada laporan yang dipublikasikan</h2>
-            <p className="text-gray-500 mt-2">Data finansial akan muncul di sini setelah dokumen disetujui (POSTED).</p>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {/* Tabs */}
-            <div className="flex space-x-2 border-b">
-              {[
-                { id: 'LR', label: 'Laba Rugi' },
-                { id: 'REV', label: 'Pendapatan' },
-                { id: 'BS', label: 'Neraca' },
-                { id: 'CF', label: 'Arus Kas' },
-              ].map(tab => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`px-6 py-3 font-semibold text-sm border-b-2 transition-colors ${
-                    activeTab === tab.id 
-                      ? 'border-brand-600 text-brand-700 bg-brand-50 rounded-t-lg' 
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Dashboard Content */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Left Column: KPI & Summary */}
-              <div className="lg:col-span-1 space-y-6">
-                <div className="bg-white p-6 rounded-2xl border shadow-sm">
-                  <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">Total Aktivitas (Semua Waktu)</h3>
-                  <p className="text-4xl font-bold text-gray-800">
-                    Rp {chartData.reduce((acc, curr) => acc + curr.total, 0).toLocaleString('id-ID')}
-                  </p>
-                  <p className="text-sm text-green-600 mt-2 flex items-center font-medium">
-                    <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                    </svg>
-                    Data telah tersinkronisasi
-                  </p>
-                </div>
-
-                <div className="bg-white p-6 rounded-2xl border shadow-sm">
-                  <h3 className="font-bold text-gray-800 mb-4">Rincian Data Terbaru</h3>
-                  <div className="max-h-64 overflow-y-auto pr-2 space-y-3">
-                    {currentData.slice(0, 50).map((row, idx) => (
-                      <div key={idx} className="flex justify-between items-center text-sm border-b pb-2">
-                        <span className="text-gray-600 truncate mr-2" title={row.uraian}>{row.uraian}</span>
-                        <span className="font-semibold text-gray-900">{row.value.toLocaleString('id-ID')}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Right Column: Chart */}
-              <div className="lg:col-span-2 bg-white p-6 rounded-2xl border shadow-sm flex flex-col">
-                <h3 className="font-bold text-gray-800 mb-6">Tren Historis</h3>
-                <div className="flex-1 min-h-[300px]">
-                  {chartData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      {activeTab === 'LR' || activeTab === 'REV' ? (
-                        <BarChart data={chartData}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-                          <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#6B7280', fontSize: 12}} dy={10} />
-                          <YAxis axisLine={false} tickLine={false} tick={{fill: '#6B7280', fontSize: 12}} tickFormatter={(val) => `${(val/1000000).toFixed(0)}M`} />
-                          <Tooltip 
-                            formatter={(value) => [`Rp ${value.toLocaleString('id-ID')}`, 'Total']}
-                            contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
-                          />
-                          <Bar dataKey="total" fill="#4F46E5" radius={[4, 4, 0, 0]} />
-                        </BarChart>
-                      ) : (
-                        <LineChart data={chartData}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-                          <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#6B7280', fontSize: 12}} dy={10} />
-                          <YAxis axisLine={false} tickLine={false} tick={{fill: '#6B7280', fontSize: 12}} tickFormatter={(val) => `${(val/1000000).toFixed(0)}M`} />
-                          <Tooltip 
-                            formatter={(value) => [`Rp ${value.toLocaleString('id-ID')}`, 'Total']}
-                            contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
-                          />
-                          <Line type="monotone" dataKey="total" stroke="#059669" strokeWidth={3} dot={{ r: 4, fill: '#059669', strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 6 }} />
-                        </LineChart>
-                      )}
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-gray-400">
-                      Data tidak cukup untuk menampilkan grafik
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
-    </div>
+          )}
+        </div>
+      )}
+    </main>
   );
 }
+

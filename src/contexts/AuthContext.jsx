@@ -1,5 +1,5 @@
 /**
- * AuthContext.jsx — Supabase Auth context provider for LM Manager V2.
+ * AuthContext.jsx — Supabase Auth context provider for Income Statement V2.
  *
  * Provides: { user, role, loading, login, signup, logout }
  *
@@ -17,6 +17,7 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [role, setRole] = useState(null);
+  const [fullName, setFullName] = useState(null);
   const [loading, setLoading] = useState(true);
 
   /**
@@ -33,14 +34,17 @@ export function AuthProvider({ children }) {
       if (error) {
         console.warn('[AuthContext] Could not fetch profile:', error.message);
         setRole('USER'); // Fallback
+        setFullName(null);
         return;
       }
 
       const fetchedRole = data.role ? data.role.toUpperCase() : 'USER';
       setRole(fetchedRole);
+      setFullName(data.full_name || null);
     } catch (err) {
       console.error('[AuthContext] fetchRole error:', err);
       setRole('USER');
+      setFullName(null);
     }
   }, []);
 
@@ -109,11 +113,13 @@ export function AuthProvider({ children }) {
     if (error) throw error;
     setUser(null);
     setRole(null);
+    setFullName(null);
   }, []);
 
   const value = {
     user,
     role,
+    fullName,
     loading,
     login,
     signup,

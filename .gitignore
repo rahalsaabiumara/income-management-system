@@ -34,3 +34,5 @@ server/data/
 template_dump.txt
 .agents/
 graphify-out/
+
+.vercel

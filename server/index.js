@@ -1,5 +1,5 @@
 /**
- * LM Manager — Backend Server
+ * Income Statement — Backend Server
  *
  * Express REST API for:
  *   GET  /api/master                — list all Master data
@@ -22,7 +22,7 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import { initDrive, copyFileToFolder, uploadFileToFolder } from './services/googleDrive.js';
-import { initSheets, readMaster } from './services/googleSheets.js';
+import { initSheets, readMaster, appendToMaster } from './services/googleSheets.js';
 import { isAuthReady, generateAuthUrl, handleCallback } from './services/googleAuth.js';
 import { runSync } from './services/syncService.js';
 import { detectLampiran, extractLampiranPdf, findTabelLMPages, extractSinglePagePdf } from './services/lampiranService.js';
@@ -31,22 +31,23 @@ import { validateAllTables } from './services/validationService.js';
 import { writeExcel, writeExcelFromTemplate } from './services/excelWriter.js';
 import { parseLMName, sortKey } from './utils/dateParser.js';
 import { ZipArchive } from 'archiver';
-import { processAndSendReport, getProcessingStatus } from './services/processingService.js';
+import { processAndSendReport, getProcessingStatus, extractToExcelCache } from './services/processingService.js';
+import { updateDocumentStatus, createDocument } from './services/documentTrackingService.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-const EXCEL_CACHE_DIR = path.join(__dirname, 'data', 'excel-cache');
+const EXCEL_CACHE_DIR = process.env.VERCEL ? path.join('/tmp', 'excel-cache') : path.join(__dirname, 'data', 'excel-cache');
 if (!fs.existsSync(EXCEL_CACHE_DIR)) {
   fs.mkdirSync(EXCEL_CACHE_DIR, { recursive: true });
 }
 
 // ── Middleware ──────────────────────────────────────────────────
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
 
 // Multer for CSV upload (in-memory)
-const upload = multer({
+const uploadCsv = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
   fileFilter: (req, file, cb) => {
@@ -54,6 +55,19 @@ const upload = multer({
       cb(null, true);
     } else {
       cb(new Error('Only CSV files are allowed'));
+    }
+  },
+});
+
+// Multer for PDF upload (in-memory)
+const uploadPdf = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB max for PDFs
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'application/pdf' || file.originalname.endsWith('.pdf')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only PDF files are allowed'));
     }
   },
 });
@@ -87,9 +101,6 @@ app.get('/api/me', requireAuth, requireRole('ADMIN', 'KEUANGAN', 'USER'), (req, 
 // ── Phase 2 Document Management Routes ───────────────────────────
 import documentRoutes from './routes/documentRoutes.js';
 import pdfProxyRoutes from './routes/pdfProxyRoutes.js';
-
-// Setup Supabase
-initSupabase();
 
 // Mount Routes
 app.use('/api/documents', documentRoutes);
@@ -139,32 +150,37 @@ app.get('/api/master', async (req, res) => {
       return res.json(localMasterData);
     }
 
+    let data = [];
+
     // Try Google Sheets
     if (isAuthReady()) {
-      const rows = await readMaster();
-      const data = rows.map((r) => {
-        const parsed = parseLMName(r.nama || r.tanggal);
-        return {
-          tanggal: r.tanggal || parsed?.tanggal || '',
-          nama: r.nama,
-          namaStandar: parsed?.namaStandar || r.nama,
-          link: r.link,
-          fileId: r.fileId,
-        };
-      });
-
-      // Sort chronologically
-      data.sort((a, b) => {
-        const pa = parseLMName(a.nama);
-        const pb = parseLMName(b.nama);
-        return sortKey(pa) - sortKey(pb);
-      });
-
-      return res.json(data);
+      try {
+        const rows = await readMaster();
+        data = rows
+          .filter(r => r.fileId) // Remove dummy rows without fileId
+          .map((r) => {
+            const parsed = parseLMName(r.nama || r.tanggal);
+            return {
+              tanggal: r.tanggal || parsed?.tanggal || '',
+              nama: r.nama,
+              namaStandar: parsed?.namaStandar || r.nama,
+              link: r.link,
+              fileId: r.fileId,
+            };
+          });
+      } catch (err) {
+        console.warn('[/api/master] Google Sheets read failed.', err.message);
+      }
     }
 
-    // No data source available
-    return res.json([]);
+    // Sort chronologically (descending)
+    data.sort((a, b) => {
+      const pa = parseLMName(a.nama);
+      const pb = parseLMName(b.nama);
+      return sortKey(pb) - sortKey(pa);
+    });
+
+    return res.json(data);
   } catch (err) {
     console.error('[/api/master] Error:', err);
     return res.status(500).json({ error: err.message });
@@ -223,7 +239,7 @@ app.post('/api/process-report', async (req, res) => {
  *
  * Expected CSV columns: Tanggal, Nama, File [, Nama Standar (ignored)]
  */
-app.post('/api/import-csv', upload.single('file'), async (req, res) => {
+app.post('/api/import-csv', uploadCsv.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -698,6 +714,108 @@ app.post('/api/process-report', async (req, res) => {
 });
 
 /**
+ * POST /api/upload-process-pdf
+ * Uploads a PDF to Drive via GAS Web App and triggers processAndSendReport.
+ * Body: multipart/form-data (file: File, nama: string)
+ */
+app.post('/api/upload-process-pdf', uploadPdf.single('file'), async (req, res) => {
+  const file = req.file;
+  if (!file) {
+    return res.status(400).json({ error: 'No PDF file uploaded.' });
+  }
+
+  const gasUrl = process.env.GAS_UPLOAD_URL;
+  if (!gasUrl) {
+    return res.status(503).json({ error: 'GAS_UPLOAD_URL belum diatur di .env.' });
+  }
+
+  try {
+    const nama = req.body.nama || file.originalname.replace('.pdf', '');
+    const folderId = process.env.LM_UPLOAD_FOLDER_ID || '1yGlZhG39xqBtKOyR2o4K3yUjuO_aAbV7';
+    
+    // Convert file to base64
+    const base64Data = file.buffer.toString('base64');
+    
+    // Payload for GAS
+    const payload = {
+      data: base64Data,
+      filename: file.originalname,
+      mimeType: 'application/pdf',
+      folderId: folderId
+    };
+
+    console.log(`[Upload] Mengirim file ke Google Apps Script...`);
+    const gasResponse = await fetch(gasUrl, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    const contentType = gasResponse.headers.get('content-type') || '';
+    if (contentType.includes('text/html')) {
+      const htmlText = await gasResponse.text();
+      throw new Error(`Google Apps Script URL requires login (returned HTML). Please redeploy the Web App and set "Who has access" to "Anyone" (Siapa saja).`);
+    }
+
+    const gasResult = await gasResponse.json();
+    if (!gasResult.success) {
+      throw new Error(gasResult.error || 'Unknown error from GAS');
+    }
+
+    const fileId = gasResult.fileId;
+    const driveLink = gasResult.url || `https://drive.google.com/file/d/${fileId}/view`;
+    console.log(`[Upload] Sukses. File ID: ${fileId}`);
+    
+    // 2. Siapkan report object untuk pipeline
+    const report = {
+      fileId,
+      nama,
+      namaStandar: nama,
+      tanggal: new Date().toISOString(),
+      link: driveLink,
+    };
+
+    // 3. Masukkan record ke Google Sheets agar muncul di frontend otomatis
+    try {
+      const parsedInfo = parseLMName(nama);
+      const displayTanggal = parsedInfo ? parsedInfo.tanggal : '';
+      await appendToMaster([[displayTanggal, report.nama, report.link, report.namaStandar]]);
+      console.log(`[Upload] Berhasil menambahkan metadata ke Google Sheets Master`);
+    } catch (sheetErr) {
+      console.error(`[Upload] Gagal menambahkan ke Sheets:`, sheetErr);
+    }
+    
+    // 3.5 Create document in Supabase for tracking in ReviewHub
+    let documentId = null;
+    try {
+      const doc = await createDocument({
+        file_id: fileId,
+        nama: report.nama,
+        uploaded_by: null // we don't have req.user in this route yet
+      });
+      documentId = doc.id;
+      console.log(`[Upload] Sukses membuat record document di Supabase: ${documentId}`);
+    } catch (dbErr) {
+      console.error(`[Upload] Gagal membuat record document di Supabase:`, dbErr.message);
+    }
+    
+    // 4. Extraction-only: PDF → Excel Cache (NO Tabular/Supabase sync)
+    extractToExcelCache(report, documentId).catch(err => {
+      console.error(`[ExtractToExcelCache Error ${fileId}]`, err);
+    });
+    
+    return res.json({ 
+      success: true, 
+      fileId, 
+      message: 'File uploaded via GAS and processing started in background' 
+    });
+  } catch (err) {
+    console.error('[/api/upload-process-pdf] Error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/process-report/:fileId/status — Get current pipeline status
  */
 app.get('/api/process-report/:fileId/status', (req, res) => {
@@ -980,19 +1098,23 @@ function buildLampiranFilename(nama, namaStandar, fallbackId = 'dokumen') {
 }
 
 // ── Start server ────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`\n🚀 LM Manager API running on http://localhost:${PORT}`);
-  console.log(`   Google services: ${isAuthReady() ? '✅ Ready' : '❌ Not Authenticated (Please login)'}`);
-  console.log(`   Endpoints:`);
-  console.log(`     GET  /api/me`);
-  console.log(`     GET  /api/master`);
-  console.log(`     POST /api/sync`);
-  console.log(`     POST /api/import-csv`);
-  console.log(`     POST /api/lampiran/download-all`);
-  console.log(`     GET  /api/lampiran/:fileId`);
-  console.log(`     POST /api/send-to-drive`);
-  console.log(`     POST /api/send-all-to-drive`);
-  console.log(`     POST /api/convert-excel/:fileId`);
-  console.log(`     GET  /api/convert-excel/download/:token`);
-  console.log(`     GET  /api/health\n`);
-});
+if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`\n🚀 Income Statement API running on http://localhost:${PORT}`);
+    console.log(`   Google services: ${isAuthReady() ? '✅ Ready' : '❌ Not Authenticated (Please login)'}`);
+    console.log(`   Endpoints:`);
+    console.log(`     GET  /api/me`);
+    console.log(`     GET  /api/master`);
+    console.log(`     POST /api/sync`);
+    console.log(`     POST /api/import-csv`);
+    console.log(`     POST /api/lampiran/download-all`);
+    console.log(`     GET  /api/lampiran/:fileId`);
+    console.log(`     POST /api/send-to-drive`);
+    console.log(`     POST /api/send-all-to-drive`);
+    console.log(`     POST /api/convert-excel/:fileId`);
+    console.log(`     GET  /api/convert-excel/download/:token`);
+    console.log(`     GET  /api/health\n`);
+  });
+}
+
+export default app;

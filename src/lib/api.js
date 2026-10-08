@@ -272,3 +272,29 @@ export async function getProcessStatus(fileId) {
 
   return res.json();
 }
+
+/**
+ * Upload a PDF file to Google Drive and immediately start the processing pipeline.
+ * @param {File} file - The PDF file to upload.
+ * @returns {Promise<{success: boolean, fileId: string, message: string}>}
+ */
+export async function uploadAndProcessPdf(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  
+  // We can pass nama from filename if needed
+  formData.append('nama', file.name.replace('.pdf', ''));
+
+  const res = await fetch(`${BASE}/api/upload-process-pdf`, {
+    method: 'POST',
+    // DO NOT set Content-Type, fetch will set it automatically with boundary for FormData
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || `Upload failed: ${res.statusText}`);
+  }
+
+  return res.json();
+}

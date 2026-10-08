@@ -20,6 +20,7 @@ const VALID_STATUSES = [
   'DRAFT_READY',
   'IN_REVIEW',
   'REVISION_REQUESTED',
+  'APPROVED',
   'POSTED',
 ];
 
@@ -161,17 +162,52 @@ export async function updateDocumentStatus(id, newStatus) {
 /**
  * PHASE 4: Add a comment to a document.
  */
-export async function addComment(document_id, user_id, comment) {
+export async function addComment(document_id, user_id, comment, metadata = {}) {
   const supabase = getClient();
+
+  const payload = {
+    document_id,
+    user_id,
+    comment,
+    jenis_komentar: metadata.jenis_komentar || 'CATATAN',
+    sheet_name: metadata.sheet_name || null,
+    target_cell: metadata.target_cell || null,
+    target_identifier: metadata.target_identifier || null,
+    author_role: metadata.author_role || null,
+    status: 'OPEN'
+  };
 
   const { data, error } = await supabase
     .from('comments')
-    .insert([{ document_id, user_id, comment }])
+    .insert([payload])
     .select()
     .single();
 
   if (error) {
     throw new Error(`Gagal menambah komentar: ${error.message}`);
+  }
+  return data;
+}
+
+/**
+ * PHASE 5: Resolve a comment.
+ */
+export async function resolveComment(comment_id, user_id) {
+  const supabase = getClient();
+
+  const { data, error } = await supabase
+    .from('comments')
+    .update({
+      status: 'RESOLVED',
+      resolved_at: new Date().toISOString(),
+      resolved_by: user_id
+    })
+    .eq('id', comment_id)
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Gagal menyelesaikan komentar: ${error.message}`);
   }
   return data;
 }
@@ -189,7 +225,15 @@ export async function listComments(document_id) {
       comment,
       created_at,
       user_id,
-      profiles (
+      jenis_komentar,
+      sheet_name,
+      target_cell,
+      target_identifier,
+      status,
+      resolved_at,
+      resolved_by,
+      author_role,
+      profiles!comments_user_id_fkey (
         full_name,
         role
       )

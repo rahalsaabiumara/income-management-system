@@ -80,8 +80,8 @@ export async function buildUuidMetadata() {
         };
       } else {
         childCount++;
-        // If we haven't seen a parent yet, we default to 'A'
-        const currentParentCode = parentCharCode === 64 ? 'A' : String.fromCharCode(parentCharCode);
+        // If we haven't seen a parent yet, we default to '0' to avoid colliding with the first parent ('A')
+        const currentParentCode = parentCharCode === 64 ? '0' : String.fromCharCode(parentCharCode);
         sheetSchema[norm(textStr)] = {
           type: 'normal',
           tag,
@@ -127,7 +127,8 @@ export async function generateTabularUuid({ monthCode, year, tableType, uraian, 
 
   const meta = sheetSchema[norm(uraian)];
   if (!meta) {
-    throw new Error(`Uraian not found in template for UUID generation: "${uraian}"`);
+    console.warn(`[Warning] Uraian not found in template for UUID generation: "${uraian}"`);
+    return null;
   }
 
   const yy = year.toString().slice(-2);

@@ -7,6 +7,7 @@ import BIDashboard from './pages/BIDashboard.jsx';
 import ReviewHub from './pages/ReviewHub.jsx';
 import DocumentViewer from './pages/DocumentViewer.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
+import AppShell from './components/layout/AppShell.jsx';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -18,15 +19,14 @@ const queryClient = new QueryClient({
 });
 
 function RootRedirect() {
-  const { user, role, loading } = useAuth();
+  const { user, loading } = useAuth();
   
   if (loading) return null;
   
   if (!user) return <Navigate to="/login" replace />;
   
-  if (role === 'ADMIN') return <Navigate to="/dashboard" replace />;
-  if (role === 'KEUANGAN') return <Navigate to="/dashboard/keuangan" replace />;
-  return <Navigate to="/documents" replace />;
+  // Semua role landing page ke BI Dashboard
+  return <Navigate to="/bi-dashboard" replace />;
 }
 
 function AppRoutes() {
@@ -38,26 +38,23 @@ function AppRoutes() {
       {/* Public Route */}
       <Route path="/login" element={<Login />} />
 
-      {/* Protected Routes: Admin & Keuangan */}
-      <Route 
-        element={<ProtectedRoute allowedRoles={['ADMIN', 'KEUANGAN']} fallbackPath="/bi-dashboard" />}
-      >
-        <Route path="/dashboard" element={<Dashboard />} />
-      </Route>
-
-      {/* Protected Routes: Keuangan Only */}
-      <Route 
-        element={<ProtectedRoute allowedRoles={['KEUANGAN']} fallbackPath="/dashboard" />}
-      >
-        <Route path="/dashboard/keuangan" element={<ReviewHub />} />
-      </Route>
-
-      {/* Protected Routes: Everyone */}
+      {/* Protected Routes: Everyone (Admin, Keuangan, User) — inside AppShell */}
       <Route 
         element={<ProtectedRoute allowedRoles={['ADMIN', 'KEUANGAN', 'USER']} fallbackPath="/login" />}
       >
-        <Route path="/bi-dashboard" element={<BIDashboard />} />
-        <Route path="/documents" element={<DocumentViewer />} />
+        <Route element={<AppShell />}>
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/bi-dashboard" element={<BIDashboard />} />
+
+          {/* Protected Routes: ReviewHub & Documents (Admin & Keuangan) */}
+          <Route 
+            element={<ProtectedRoute allowedRoles={['ADMIN', 'KEUANGAN']} fallbackPath="/bi-dashboard" />}
+          >
+            <Route path="/documents" element={<DocumentViewer />} />
+            <Route path="/keuangan" element={<ReviewHub />} />
+            <Route path="/dashboard/keuangan" element={<Navigate to="/keuangan" replace />} />
+          </Route>
+        </Route>
       </Route>
 
       {/* Redirect all unmatched routes to root */}

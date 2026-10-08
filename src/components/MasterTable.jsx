@@ -56,7 +56,7 @@ function SkeletonRow() {
   );
 }
 
-export default function MasterTable({ data = [], isLoading = false, onViewLampiran, onConvertExcel, onFilteredDataChange }) {
+export default function MasterTable({ data = [], isLoading = false, selectedRow, onSelectRow, onConvertExcel, onFilteredDataChange, uploadProps }) {
   const [search, setSearch] = useState('');
   const [yearFilter, setYearFilter] = useState('all');
   const [sortDir, setSortDir] = useState('desc'); // desc = terbaru dulu
@@ -150,8 +150,38 @@ export default function MasterTable({ data = [], isLoading = false, onViewLampir
 
   return (
     <>
-      <div className="animate-fade-in">
+      <div className="animate-fade-in flex flex-col h-full p-4">
         {/* ── Toolbar ────────────────────────────────────── */}
+        {uploadProps && (
+          <div className="flex flex-col gap-2 mb-4">
+            <label className={`flex items-center justify-center gap-2 px-4 py-2.5 text-white text-sm font-bold rounded-xl cursor-pointer transition-all shadow-sm ${uploadProps.isUploading ? 'bg-gray-400' : 'bg-brand-600 hover:bg-brand-700'}`}>
+              {uploadProps.isUploading ? (
+                <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              ) : (
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                </svg>
+              )}
+              {uploadProps.isUploading ? 'Mengunggah & Memproses...' : 'Upload PDF Laporan'}
+              <input 
+                type="file" 
+                accept="application/pdf"
+                className="hidden" 
+                onChange={uploadProps.handlePdfUpload}
+                disabled={uploadProps.isUploading}
+              />
+            </label>
+            {uploadProps.uploadError && (
+              <div className="text-xs text-rose-600 font-medium px-1">{uploadProps.uploadError}</div>
+            )}
+            {uploadProps.uploadSuccess && (
+              <div className="text-xs text-emerald-600 font-medium px-1">{uploadProps.uploadSuccess}</div>
+            )}
+          </div>
+        )}
+
         <div className="flex flex-col sm:flex-row gap-3 mb-4">
           {/* Search */}
           <div className="relative flex-1">
@@ -164,11 +194,11 @@ export default function MasterTable({ data = [], isLoading = false, onViewLampir
               placeholder="Cari laporan…"
               value={search}
               onChange={handleSearch}
-              className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-surface-200 dark:border-surface-800
-                       bg-white dark:bg-surface-900 text-sm
+              className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200
+                       bg-white text-sm text-gray-900
                        focus:ring-2 focus:ring-brand-400 focus:border-brand-400
                        transition-all duration-200
-                       placeholder:text-surface-500 dark:placeholder:text-surface-400"
+                       placeholder-gray-400"
             />
           </div>
 
@@ -177,8 +207,8 @@ export default function MasterTable({ data = [], isLoading = false, onViewLampir
             id="year-filter"
             value={yearFilter}
             onChange={handleYearChange}
-            className="px-4 py-2.5 rounded-xl border border-surface-200 dark:border-surface-800
-                     bg-white dark:bg-surface-900 text-sm font-medium
+            className="px-4 py-2.5 rounded-xl border border-gray-200
+                     bg-white text-sm font-medium text-gray-900
                      focus:ring-2 focus:ring-brand-400 focus:border-brand-400
                      transition-all duration-200 cursor-pointer min-w-[140px]"
           >
@@ -189,142 +219,97 @@ export default function MasterTable({ data = [], isLoading = false, onViewLampir
           </select>
         </div>
 
-        {/* ── Table ──────────────────────────────────────── */}
-        <div className="overflow-x-auto rounded-2xl border border-surface-200 dark:border-surface-800
-                      bg-white dark:bg-surface-900 shadow-sm">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-surface-200 dark:border-surface-800 bg-surface-50 dark:bg-surface-900">
-                <th className="px-4 py-3 text-left font-semibold text-surface-900 dark:text-surface-100 w-12">#</th>
-                <th
-                  className="px-4 py-3 text-left font-semibold text-surface-900 dark:text-surface-100 cursor-pointer select-none
-                           hover:text-brand-600 dark:hover:text-brand-400 transition-colors group"
-                  onClick={toggleSort}
-                >
-                  <span className="inline-flex items-center gap-1.5">
-                    Tanggal
-                    <SortIcon direction={sortDir} />
-                  </span>
-                </th>
-                <th className="px-4 py-3 text-left font-semibold text-surface-900 dark:text-surface-100">Nama</th>
-                <th className="px-4 py-3 text-center font-semibold text-surface-900 dark:text-surface-100 w-32">Aksi</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-surface-100 dark:divide-surface-800">
-              {isLoading ? (
-                Array.from({ length: 8 }).map((_, i) => <SkeletonRow key={i} />)
-              ) : paginated.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="text-center py-16 text-surface-500 dark:text-surface-400">
-                    <div className="flex flex-col items-center gap-3">
-                      <svg className="w-12 h-12 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      <p className="text-base font-medium">Tidak ada data laporan</p>
-                      <p className="text-sm">Gunakan tombol <strong>Sync</strong> atau <strong>Import CSV</strong> untuk menambahkan data.</p>
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                paginated.map((row, idx) => {
-                  const globalIdx = (safeCurrentPage - 1) * PAGE_SIZE + idx + 1;
-                  const yc = row.parsed ? getYearColor(row.parsed.tahun) : null;
-                  return (
-                    <tr
-                      key={row.fileId || idx}
-                      className="hover:bg-brand-50/50 dark:hover:bg-brand-950/30 transition-colors duration-150"
-                    >
-                      <td className="px-4 py-3 tabular-nums text-surface-500 dark:text-surface-400 font-medium">{globalIdx}</td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <span className="font-medium text-surface-900 dark:text-surface-100">
-                          {row.tanggal || row.parsed?.tanggal || '—'}
-                        </span>
+        {/* ── Card List ──────────────────────────────────────── */}
+        <div className="flex-1 min-h-0 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-sm p-2 space-y-2">
+          {isLoading ? (
+            Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="animate-pulse flex gap-3 p-4 border rounded-xl bg-gray-50">
+                 <div className="w-10 h-10 bg-gray-200 rounded-lg"></div>
+                 <div className="flex-1 space-y-2">
+                   <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+                   <div className="h-3 bg-gray-200 rounded w-1/4"></div>
+                 </div>
+              </div>
+            ))
+          ) : paginated.length === 0 ? (
+            <div className="text-center py-16 text-gray-500">
+              <div className="flex flex-col items-center gap-3">
+                <svg className="w-12 h-12 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <p className="text-base font-medium">Tidak ada data laporan</p>
+                <p className="text-sm">Gunakan tombol <strong>Sync</strong> atau <strong>Import CSV</strong> untuk menambahkan data.</p>
+              </div>
+            </div>
+          ) : (
+            <ul className="space-y-2">
+              {paginated.map((row, idx) => {
+                const isSelected = selectedRow?.fileId === row.fileId;
+                const yc = row.parsed ? getYearColor(row.parsed.tahun) : null;
+                
+                return (
+                  <li
+                    key={row.fileId || idx}
+                    onClick={() => onSelectRow?.(row)}
+                    className={`cursor-pointer group p-4 rounded-xl border transition-all duration-200 ${
+                      isSelected
+                        ? 'border-brand-500 bg-brand-50 shadow-md ring-1 ring-brand-500'
+                        : 'border-gray-200 bg-white hover:border-brand-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <div className="flex items-center gap-2">
                         {yc && (
-                          <span className={`ml-2 inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${yc.bg} ${yc.text}`}>
+                          <span className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${yc.bg} ${yc.text}`}>
                             {row.parsed.tahun}
                           </span>
                         )}
-                      </td>
-                      <td className="px-4 py-3 text-surface-900 dark:text-surface-100 font-medium max-w-[300px] truncate" title={row.namaStandar || row.parsed?.namaStandar || ''}>
-                        {row.namaStandar || row.parsed?.namaStandar || '—'}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-center gap-1">
-                          {/* Lampiran button */}
-                          {row.fileId && (
-                            <button
-                              id={`lampiran-${row.fileId}`}
-                              onClick={() => onViewLampiran?.(row)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium
-                                       text-brand-600 dark:text-brand-400
-                                       hover:bg-brand-100 dark:hover:bg-brand-900/40
-                                       transition-all duration-200"
-                              title="Lihat Lampiran"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                              </svg>
-                              Lampiran
-                            </button>
-                          )}
-                          {/* Drive link */}
-                          {row.link && (
-                            <a
-                              href={row.link}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium
-                                       text-teal-600 dark:text-teal-400
-                                       hover:bg-teal-100 dark:hover:bg-teal-900/40
-                                       transition-all duration-200"
-                              title="Buka di Google Drive"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                              </svg>
-                              Drive
-                            </a>
-                          )}
-                          {/* Convert to Excel button */}
-                          {row.fileId && (
-                            <button
-                              id={`excel-${row.fileId}`}
-                              onClick={() => onConvertExcel?.(row)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium
-                                       text-indigo-600 dark:text-indigo-400
-                                       hover:bg-indigo-100 dark:hover:bg-indigo-900/40
-                                       transition-all duration-200"
-                              title="Convert lampiran ke Excel"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                              </svg>
-                              Excel
-                            </button>
-                          )}
-                          {/* Send to Drive button -> now Process Tabular */}
-                          {row.fileId && (
-                            <button
-                              id={`send-drive-${row.fileId}`}
-                              onClick={() => handleProcessTabular(row)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-all duration-200"
-                              title="Ekstrak & Sinkronisasi Data Tabular"
-                            >
-                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                                </svg>
-                              Kirim
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
+                        <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md">
+                          {row.tanggal || row.parsed?.tanggal || '—'}
+                        </span>
+                      </div>
+                      
+                      {/* Actions */}
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {row.link && (
+                          <a
+                            href={row.link}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-1.5 text-gray-400 hover:text-teal-600 hover:bg-teal-50 rounded-lg transition-colors"
+                            title="Buka di Google Drive"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                            </svg>
+                          </a>
+                        )}
+                        {row.fileId && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleProcessTabular(row);
+                            }}
+                            className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                            title="Ekstrak & Sinkronisasi Data Tabular"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <h4 className={`text-sm font-bold leading-snug line-clamp-2 ${isSelected ? 'text-brand-900' : 'text-gray-800'}`}>
+                      {row.namaStandar || row.parsed?.namaStandar || '—'}
+                    </h4>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
 
         {/* ── Pagination ────────────────────────────────── */}
@@ -361,7 +346,7 @@ export default function MasterTable({ data = [], isLoading = false, onViewLampir
                     className={`w-9 h-9 rounded-lg text-sm font-medium transition-all duration-200
                     ${safeCurrentPage === pageNum
                         ? 'bg-brand-500 text-white shadow-md shadow-brand-500/25'
-                        : 'hover:bg-surface-100 dark:hover:bg-surface-800 text-surface-900 dark:text-surface-100'
+                        : 'hover:bg-gray-100 text-gray-600'
                       }`}
                   >
                     {pageNum}

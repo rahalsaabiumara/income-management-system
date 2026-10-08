@@ -3,38 +3,75 @@
 
 /* ── Custom Theme ─────────────────────────────────────────────── */
 @theme {
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
 
-  /* Brand palette */
-  --color-brand-50: oklch(0.97 0.01 250);
-  --color-brand-100: oklch(0.93 0.03 250);
-  --color-brand-200: oklch(0.87 0.06 250);
-  --color-brand-300: oklch(0.77 0.10 250);
-  --color-brand-400: oklch(0.65 0.15 250);
-  --color-brand-500: oklch(0.55 0.20 250);
-  --color-brand-600: oklch(0.48 0.20 250);
-  --color-brand-700: oklch(0.40 0.18 250);
-  --color-brand-800: oklch(0.33 0.14 250);
-  --color-brand-900: oklch(0.27 0.10 250);
-  --color-brand-950: oklch(0.20 0.07 250);
-
-  /* Surface / background */
-  --color-surface-50: oklch(0.985 0.002 250);
-  --color-surface-100: oklch(0.96 0.004 250);
-  --color-surface-200: oklch(0.92 0.006 250);
-  --color-surface-300: oklch(0.85 0.008 250);
-  --color-surface-400: oklch(0.70 0.010 250);
-  --color-surface-500: oklch(0.55 0.012 250);
-  --color-surface-600: oklch(0.40 0.014 250);
-  --color-surface-700: oklch(0.30 0.015 250);
-  --color-surface-800: oklch(0.22 0.015 250);
-  --color-surface-900: oklch(0.17 0.015 250);
-  --color-surface-950: oklch(0.13 0.015 250);
-
+  /* Brand */
+  --color-brand-main: #2FA84A;
+  --color-brand-tint: #5FC98A;
+  --color-brand-shade: #1F7A37;
+  
+  /* Accents */
+  --color-accent-gold: #E0A83C;
+  --color-accent-blue: #2389C4;
+  
+  /* Layout */
+  --color-bg-page: #FFFFFF;
+  --color-bg-surface: #F9FAFB;
+  --color-border-divider: #E5E7EB;
+  
+  /* Text */
+  --color-text-main: #111827;
+  --color-text-muted: #6B7280;
+  
   /* Status */
-  --color-success: oklch(0.65 0.20 145);
-  --color-warning: oklch(0.75 0.15 75);
-  --color-danger: oklch(0.60 0.22 25);
+  --color-status-up: #16A34A;
+  --color-status-down: #DC2626;
+
+  /* Chart Palette */
+  --color-chart-1: #2FA84A;
+  --color-chart-2: #5FC98A;
+  --color-chart-3: #E0A83C;
+  --color-chart-4: #2389C4;
+  --color-chart-5: #94A3B8;
+  
+  /* Retaining legacy tokens for unmodified components so they don't break */
+  --color-brand-50: #f0fdf4;
+  --color-brand-100: #dcfce7;
+  --color-brand-200: #bbf7d0;
+  --color-brand-300: #86efac;
+  --color-brand-400: #4ade80;
+  --color-brand-500: #2FA84A; /* Map 500 to brand-main */
+  --color-brand-600: #1F7A37; /* Map 600 to brand-shade */
+  --color-brand-700: #15803d;
+  --color-brand-800: #166534;
+  --color-brand-900: #14532d;
+  --color-brand-950: #052e16;
+
+  --color-surface-50: #ffffff;
+  --color-surface-100: #F9FAFB;
+  --color-surface-200: #f3f4f6;
+  --color-surface-300: #e5e7eb;
+  --color-surface-400: #9ca3af;
+  --color-surface-500: #6b7280;
+  --color-surface-600: #4b5563;
+  --color-surface-700: #374151;
+  --color-surface-800: #1f2937;
+  --color-surface-900: #111827;
+  --color-surface-950: #030712;
+
+  /* ── App Shell Layout Tokens ─── */
+  --sidebar-bg: #0B3E1F;
+  --sidebar-text: #CDE9D5;
+  --sidebar-text-secondary: #A9D4B5;
+  --sidebar-active: #2FA84A;
+  --sidebar-hover: rgba(255,255,255,0.08);
+  --sidebar-parent-active: rgba(255,255,255,0.10);
+  --sidebar-divider: rgba(255,255,255,0.18);
+  --sidebar-w-expanded: 240px;
+  --sidebar-w-rail: 64px;
+  --topbar-h: 56px;
+  --chart-row-h: 0px; /* measured by ResizeObserver at runtime */
+  --kpi-row-h: 156px; /* fixed KPI type strip height (level 1 = level 2, no layout jump) */
 }
 
 /* ── Base Layer ───────────────────────────────────────────────── */
@@ -45,24 +82,29 @@
 
   html {
     scroll-behavior: smooth;
+    scroll-padding-top: calc(var(--topbar-h) + var(--chart-row-h) + 96px);
   }
 
   body {
     @apply font-sans antialiased;
-    @apply bg-surface-50 text-surface-900;
-    @apply dark:bg-surface-950 dark:text-surface-100;
+    @apply bg-bg-page text-text-main;
     margin: 0;
     min-height: 100dvh;
   }
 
   ::selection {
-    @apply bg-brand-200 text-brand-900;
-    @apply dark:bg-brand-800 dark:text-brand-100;
+    @apply bg-brand-tint text-bg-page;
   }
 
   /* Focus ring utility */
   :focus-visible {
-    @apply outline-2 outline-offset-2 outline-brand-500;
+    @apply outline-2 outline-offset-2 outline-brand-main;
+  }
+
+  /* BI dashboard spacing — one gap for every card on the page:
+     KPI strip ↔ chart card ↔ table card (vertical) and between KPI cards (horizontal). */
+  :root {
+    --card-gap: 12px;
   }
 }
 
@@ -109,6 +151,40 @@
   to { transform: rotate(360deg); }
 }
 
+@keyframes gradient-xy {
+  0%, 100% {
+    background-size: 400% 400%;
+    background-position: 0% 0%;
+  }
+  25% {
+    background-size: 400% 400%;
+    background-position: 100% 0%;
+  }
+  50% {
+    background-size: 400% 400%;
+    background-position: 100% 100%;
+  }
+  75% {
+    background-size: 400% 400%;
+    background-position: 0% 100%;
+  }
+}
+
+@keyframes donutGrow {
+  from { stroke-dasharray: 0 9999; opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes kpiSlideInRight {
+  from { transform: translateX(30px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+@keyframes kpiSlideInLeft {
+  from { transform: translateX(-30px); opacity: 0; }
+  to   { transform: translateX(0);     opacity: 1; }
+}
+
 @layer utilities {
   .animate-fade-in {
     animation: fade-in 0.4s ease-out both;
@@ -126,5 +202,166 @@
   }
   .animate-spin {
     animation: spin 0.7s linear infinite;
+  }
+  .kpi-drill-right {
+    animation: kpiSlideInRight 0.35s ease-out both;
+  }
+  .kpi-drill-left {
+    animation: kpiSlideInLeft 0.35s ease-out both;
+  }
+  .animate-gradient-xy {
+    animation: gradient-xy 15s ease infinite;
+  }
+}
+
+/* ── Login page: dynamic breathing gradient background ───────────── */
+@keyframes dynamic-bg-shift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.dynamic-bg {
+  background: linear-gradient(-45deg, #022c16, #065f46, #10b981, #047857);
+  background-size: 400% 400%;
+  animation: dynamic-bg-shift 15s ease infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dynamic-bg { animation: none; }
+}
+
+/* ── BI dashboard layout ──────────────────────────────────────────── */
+/* Vertical stack: KPI strip → chart row → table card, all --card-gap apart */
+.bi-section-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+}
+
+/* Chart row: the gap strips above and below the card belong to this element
+   (padding) and the stack gap is cancelled (negative margin), so the visible
+   distance stays --card-gap. When sticky, its opaque page-colored background
+   (bg-gray-50 in JSX) covers both strips, so scrolling table rows never show
+   through. Its measured border-box height feeds --chart-row-h. */
+.bi-chart-row {
+  padding-block: var(--card-gap);
+  margin-block: calc(-1 * var(--card-gap));
+}
+
+/* Merged chart card: line chart (6) | bar chart (4), one border/radius/shadow */
+.bi-chart-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+.bi-chart-card > .bi-chart-pane {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.bi-chart-card > .bi-chart-pane + .bi-chart-pane {
+  border-top: 1px solid #E5E7EB;
+}
+@media (min-width: 1024px) {
+  .bi-chart-card {
+    grid-template-columns: minmax(0, 6fr) minmax(0, 4fr);
+  }
+  .bi-chart-card > .bi-chart-pane + .bi-chart-pane {
+    border-top: 0;
+    border-left: 1px solid #E5E7EB;
+  }
+}
+
+/* Line chart legend (comparison mode): flows sideways, max 4 rows, then scrolls */
+.trend-legend {
+  --trend-legend-row: 22px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-auto-rows: var(--trend-legend-row);
+  column-gap: 12px;
+  row-gap: 0;
+  max-height: calc(var(--trend-legend-row) * 4);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.trend-legend::-webkit-scrollbar {
+  width: 4px;
+}
+
+/* ── KPI type strip (Profit Loss / Cash Flow / Balance Sheet) ────── */
+/* View Transition styling — only active while html.kpi-vt is set */
+html.kpi-vt::view-transition-group(*) {
+  animation-duration: 420ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+html.kpi-vt::view-transition-old(*),
+html.kpi-vt::view-transition-new(*) {
+  animation-duration: 420ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* Primary cards stay above the secondary cards sliding out from behind them */
+html.kpi-vt::view-transition-group(*.kpi-primary) {
+  z-index: 2;
+}
+html.kpi-vt::view-transition-image-pair(*.kpi-primary) {
+  overflow: clip;
+}
+html.kpi-vt::view-transition-old(*.kpi-primary),
+html.kpi-vt::view-transition-new(*.kpi-primary) {
+  width: 100%;
+  height: 100%;
+  object-fit: none;
+  object-position: left top;
+  transform-origin: left center;
+}
+/* Secondary cards are driven by Web Animations (slide + stagger) */
+html.kpi-vt:not(.kpi-vt-reduced)::view-transition-old(*.kpi-secondary),
+html.kpi-vt:not(.kpi-vt-reduced)::view-transition-new(*.kpi-secondary) {
+  animation: none;
+}
+/* Reduced motion: no movement, short crossfade */
+html.kpi-vt-reduced::view-transition-group(*) {
+  animation: none !important;
+}
+html.kpi-vt-reduced::view-transition-old(*),
+html.kpi-vt-reduced::view-transition-new(*) {
+  animation-duration: 120ms !important;
+}
+
+/* Fallback (no View Transitions API): secondary cards slide in */
+@keyframes kpiSecIn {
+  from { opacity: 0; transform: translateX(-24px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes kpiFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.kpi-sec-enter {
+  animation: kpiSecIn 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Achievement ring draw (stroke-dashoffset), starts after the strip transition */
+@keyframes kpiRingDraw {
+  from { stroke-dashoffset: var(--ring-from); }
+}
+.kpi-ring-arc {
+  animation: kpiRingDraw 700ms ease-out 320ms both;
+}
+
+.kpi-sec-scroller {
+  scrollbar-width: thin;
+}
+.kpi-sec-scroller::-webkit-scrollbar {
+  height: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kpi-sec-enter {
+    animation: kpiFadeIn 120ms ease-out both !important;
+  }
+  .kpi-ring-arc {
+    animation: none !important;
+  }
+  .kpi-type-card {
+    transition: none !important;
   }
 }

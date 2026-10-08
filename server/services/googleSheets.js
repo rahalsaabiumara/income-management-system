@@ -93,7 +93,7 @@ export async function appendToMaster(rows) {
   if (!sheetsClient || !rows.length) return;
   await sheetsClient.spreadsheets.values.append({
     spreadsheetId,
-    range: "'Master'!A:C",
+    range: "'Master'!A:D",
     valueInputOption: 'USER_ENTERED',
     insertDataOption: 'INSERT_ROWS',
     requestBody: {

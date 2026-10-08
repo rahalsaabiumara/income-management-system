@@ -4,7 +4,7 @@ Web-based application to manage and process management reports (Laporan Manajeme
 
 ## Overview
 
-The Income Management System (LM Manager) streamlines the workflow of retrieving PDF reports from Google Drive, extracting tabular data (such as PDPT, LR, NERACA, ARUS KAS) using AI (Gemini Vision API), and automatically converting them into structured Excel files and Google Sheets. It integrates with Supabase for data management and provides a comprehensive dashboard for processing files in batches.
+The Income Management System (Income Statement) streamlines the workflow of retrieving PDF reports from Google Drive, extracting tabular data (such as PDPT, LR, NERACA, ARUS KAS) using AI (Gemini Vision API), and automatically converting them into structured Excel files and Google Sheets. It integrates with Supabase for data management and provides a comprehensive dashboard for processing files in batches.
 
 ## Features
 

@@ -1,16 +1,14 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import ProcessingModal from '../components/ProcessingModal.jsx';
 import MasterTable from '../components/MasterTable.jsx';
-import SyncButton from '../components/SyncButton.jsx';
-import CsvImportModal from '../components/CsvImportModal.jsx';
 import LampiranViewer from '../components/LampiranViewer.jsx';
 import ExcelConvertModal from '../components/ExcelConvertModal.jsx';
-import DownloadAllButton from '../components/DownloadAllButton.jsx';
 import BatchConvertModal from '../components/BatchConvertModal.jsx';
-import SendAllToDriveButton from '../components/SendAllToDriveButton.jsx';
-import { fetchMaster, checkAuthStatus, getAuthUrl } from '../lib/api.js';
+import { fetchMaster, checkAuthStatus, getAuthUrl, uploadAndProcessPdf } from '../lib/api.js';
 import { parseLMName, sortKey } from '../lib/dateParser.js';
 import { useAuth } from '../contexts/AuthContext.jsx';
+
 
 /**
  * DUMMY DATA — used before backend is available.
@@ -42,21 +40,25 @@ function generateDummyData() {
 }
 
 /**
- * Dashboard — Main page composing all LM Manager components.
+ * Dashboard — Main page composing all Income Statement components.
  */
 export default function Dashboard() {
-  const { logout } = useAuth();
+  const { user, fullName, logout, role } = useAuth();
   const queryClient = useQueryClient();
-  const [csvModalOpen, setCsvModalOpen] = useState(false);
   const [lampiranRow, setLampiranRow] = useState(null);
   const [excelConvertRow, setExcelConvertRow] = useState(null);
+  const [processingReport, setProcessingReport] = useState(null);
   const [batchModalOpen, setBatchModalOpen] = useState(false);
-  const [localData, setLocalData] = useState(null); // For CSV-imported data
-  const [filteredData, setFilteredData] = useState([]); // Current filtered rows from MasterTable
+  const [localData, setLocalData] = useState(null); // For local data override
+
+  // PDF Upload State (Admin only)
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
+  const [uploadSuccess, setUploadSuccess] = useState(false);
+
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
-      return document.documentElement.classList.contains('dark') ||
-        window.matchMedia('(prefers-color-scheme: dark)').matches;
+      return false; // Default to Light Mode as per requirement
     }
     return false;
   });
@@ -86,23 +88,6 @@ export default function Dashboard() {
   // Use local data (from CSV import) if available, otherwise API data, fallback to dummy
   const tableData = localData || ((isError || !isAuthReady) ? DUMMY_DATA : (apiData || DUMMY_DATA));
 
-  // Handle sync complete
-  const handleSyncComplete = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ['master'] });
-    setLocalData(null); // Clear local override
-  }, [queryClient]);
-
-  // Handle CSV import
-  const handleCsvImport = useCallback((importedRows) => {
-    // Sort imported data chronologically
-    const sorted = [...importedRows].sort((a, b) => {
-      const pa = parseLMName(a.nama || a.namaStandar);
-      const pb = parseLMName(b.nama || b.namaStandar);
-      return sortKey(pa) - sortKey(pb);
-    });
-    setLocalData(sorted);
-  }, []);
-
   // Lampiran viewer
   const handleViewLampiran = useCallback((row) => {
     setLampiranRow(row);
@@ -110,11 +95,6 @@ export default function Dashboard() {
 
   const handleCloseLampiran = useCallback(() => {
     setLampiranRow(null);
-  }, []);
-
-  // Track filtered rows from MasterTable for Download All
-  const handleFilteredDataChange = useCallback((rows) => {
-    setFilteredData(rows);
   }, []);
 
   // Excel convert
@@ -135,111 +115,50 @@ export default function Dashboard() {
     }
   };
 
+  const handlePdfUpload = async (e) => {
+    const file = e.target.files?.[0];
+
+    // Reset file input so the same file can be selected again and to prevent duplicate triggers
+    e.target.value = null;
+
+    if (!file) return;
+
+    if (file.type !== 'application/pdf') {
+      setUploadError('Hanya file PDF yang diperbolehkan.');
+      return;
+    }
+
+    setIsUploading(true);
+    setUploadError(null);
+    setUploadSuccess(false);
+
+    try {
+      // Kita panggil API yang akan upload ke Drive lalu initiate processing
+      const res = await uploadAndProcessPdf(file);
+
+      setUploadSuccess(true);
+      // Timeout to clear success message
+      setTimeout(() => setUploadSuccess(false), 5000);
+
+      // Optionally refresh the table if needed
+      queryClient.invalidateQueries({ queryKey: ['master'] });
+
+    } catch (err) {
+      console.error('Upload failed:', err);
+      setUploadError(err.message || 'Gagal mengunggah file.');
+    } finally {
+      setIsUploading(false);
+      // Reset input
+      e.target.value = '';
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-surface-50 dark:bg-surface-950 transition-colors duration-300">
-      {/* ── Header ──────────────────────────────────────── */}
-      <header className="sticky top-0 z-40 bg-white/80 dark:bg-surface-900/80 backdrop-blur-xl
-                         border-b border-surface-200 dark:border-surface-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            {/* Logo & title */}
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-400 to-brand-600
-                             flex items-center justify-center shadow-lg shadow-brand-500/20">
-                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-              </div>
-              <div>
-                <h1 className="text-lg font-bold text-surface-900 dark:text-surface-100 leading-tight">
-                  LM Manager
-                </h1>
-                <p className="text-xs text-surface-500 dark:text-surface-400 leading-tight">
-                  Laporan Manajemen
-                </p>
-              </div>
-            </div>
+    <div className="bg-gray-50 flex-1">
+      {/* ── Main Content ──────────────────────────────── */}
+      <main className="w-full mx-auto px-4 sm:px-6 py-6 flex flex-col h-[calc(100vh-var(--topbar-h))]">
 
-            {/* Actions */}
-            <div className="flex items-center gap-2">
-              {/* Dark mode toggle */}
-              <button
-                id="dark-mode-toggle"
-                onClick={() => setDarkMode((d) => !d)}
-                className="p-2.5 rounded-xl hover:bg-surface-100 dark:hover:bg-surface-800
-                           transition-all duration-200"
-                title={darkMode ? 'Mode Terang' : 'Mode Gelap'}
-              >
-                {darkMode ? (
-                  <svg className="w-5 h-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-                  </svg>
-                ) : (
-                  <svg className="w-5 h-5 text-surface-900 dark:text-surface-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-                  </svg>
-                )}
-              </button>
-
-              {/* Import CSV */}
-              <button
-                id="import-csv-button"
-                onClick={() => setCsvModalOpen(true)}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold
-                           border border-surface-200 dark:border-surface-800
-                           text-surface-900 dark:text-surface-100
-                           hover:bg-surface-100 dark:hover:bg-surface-800
-                           transition-all duration-200"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                </svg>
-                Import CSV
-              </button>
-
-              {/* Download All Lampiran */}
-              <DownloadAllButton filteredData={filteredData} />
-
-              {/* Batch Download/Upload Excel */}
-              <button
-                onClick={() => setBatchModalOpen(true)}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold
-                           text-white bg-brand-600 hover:bg-brand-700 shadow-sm
-                           transition-all duration-200"
-                title="Download/Upload Excel Semua Bulan (Batch)"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                Batch Excel
-              </button>
-
-              {/* Send All to Drive */}
-              <SendAllToDriveButton filteredData={filteredData} />
-
-              {/* Sync */}
-              <SyncButton onSyncComplete={handleSyncComplete} />
-
-              {/* Logout */}
-              <button
-                onClick={logout}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold
-                           text-red-600 bg-red-50 hover:bg-red-100 shadow-sm
-                           transition-all duration-200 ml-2"
-                title="Keluar (Logout)"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                </svg>
-                Logout
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* ── Main Content ────────────────────────────────── */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {/* Upload PDF is now handled inside the Sidebar/MasterTable area */}
 
         {/* Auth notice */}
         {authStatus && !isAuthReady && (
@@ -264,49 +183,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Stats bar */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-          <StatCard
-            label="Total Laporan"
-            value={tableData.length}
-            icon={
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            }
-            color="brand"
-          />
-          <StatCard
-            label="Tahun Tercakup"
-            value={new Set(tableData.map((r) => parseLMName(r.nama)?.tahun).filter(Boolean)).size}
-            icon={
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-            }
-            color="teal"
-          />
-          <StatCard
-            label="Dengan Link"
-            value={tableData.filter((r) => r.link).length}
-            icon={
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-              </svg>
-            }
-            color="violet"
-          />
-          <StatCard
-            label="Sumber Data"
-            value={localData ? 'CSV' : (isError ? 'Dummy' : 'API')}
-            icon={
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
-              </svg>
-            }
-            color="amber"
-          />
-        </div>
 
         {/* Local data notice */}
         {localData && (
@@ -338,35 +214,69 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Table */}
-        <MasterTable
-          data={tableData}
-          isLoading={isLoading && !isError}
-          onViewLampiran={handleViewLampiran}
-          onConvertExcel={handleConvertExcel}
-          onFilteredDataChange={handleFilteredDataChange}
-        />
+        {/* Split View Container */}
+        <div className="flex-1 flex flex-col md:flex-row gap-6 min-h-0">
+
+          {/* Left Panel: Sidebar / MasterTable */}
+          <div className="w-full md:w-80 lg:w-96 flex-shrink-0 flex flex-col min-h-0 bg-white border border-surface-200 dark:border-surface-800 rounded-xl overflow-hidden shadow-sm">
+            <MasterTable
+              data={tableData}
+              isLoading={isLoading && !isError}
+              selectedRow={lampiranRow}
+              onSelectRow={handleViewLampiran}
+              role={role}
+              uploadProps={role === 'ADMIN' ? {
+                isUploading,
+                uploadError,
+                uploadSuccess,
+                handlePdfUpload
+              } : null}
+            />
+          </div>
+
+          {/* Right Panel: PDF Viewer inline */}
+          <div className="flex-1 flex flex-col min-h-0 bg-white border border-surface-200 dark:border-surface-800 rounded-xl overflow-hidden shadow-sm">
+            {lampiranRow ? (
+              <LampiranViewer
+                isOpen={true}
+                onClose={handleCloseLampiran}
+                row={lampiranRow}
+                inline={true}
+                onConvertExcel={handleConvertExcel}
+                onProcessTabular={() => setProcessingReport(lampiranRow)}
+                role={role}
+              />
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center text-surface-400 bg-surface-50 dark:bg-surface-900/50">
+                <div className="p-4 rounded-full bg-white dark:bg-surface-800 shadow-sm border border-surface-200 dark:border-surface-700 mb-4">
+                  <svg className="w-12 h-12 text-surface-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-bold text-surface-900 dark:text-surface-100">Belum Ada Laporan Terpilih</h3>
+                <p className="text-sm mt-1 max-w-sm text-center">Pilih laporan di sebelah kiri untuk melihat preview dokumen disini secara langsung.</p>
+              </div>
+            )}
+          </div>
+        </div>
       </main>
 
       {/* ── Footer ──────────────────────────────────────── */}
-      <footer className="border-t border-surface-200 dark:border-surface-800 mt-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-center text-xs text-surface-500 dark:text-surface-400">
-          LM Manager — Sistem Otomasi Laporan Manajemen &copy; {new Date().getFullYear()}
+      <footer className="border-t border-surface-200 dark:border-surface-800 mt-6 bg-white">
+        <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-6 text-center text-xs text-surface-500 dark:text-surface-400">
+          Income Statement — Laporan Manajemen &copy; {new Date().getFullYear()}
         </div>
       </footer>
 
       {/* ── Modals ──────────────────────────────────────── */}
-      <CsvImportModal
-        isOpen={csvModalOpen}
-        onClose={() => setCsvModalOpen(false)}
-        onImport={handleCsvImport}
-      />
 
-      <LampiranViewer
-        isOpen={!!lampiranRow}
-        onClose={handleCloseLampiran}
-        row={lampiranRow}
-      />
+      {processingReport && (
+        <ProcessingModal
+          report={processingReport}
+          onClose={() => setProcessingReport(null)}
+        />
+      )}
+
 
       <ExcelConvertModal
         isOpen={!!excelConvertRow}
