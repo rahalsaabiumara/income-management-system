@@ -36,3 +36,6 @@ template_dump.txt
 graphify-out/
 
 .vercel
+
+server/service-account.json
+service-account.json

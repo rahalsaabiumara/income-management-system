@@ -50,11 +50,11 @@ async function ensurePdfCached(fileId) {
  *   details: Array<{type: string, label: string, page: number|null}>
  * }>}
  */
-export async function findTabelLMPages(fileId) {
-  // Check cache
+export async function findTabelLMPages(fileId, startPage = 1, chunkSize = 0) {
+  // Check cache if requesting full scan or first chunk (if previously completed)
   const cached = cache.get(fileId);
-  if (cached?.pages) {
-    return cached.pages;
+  if (cached?.pages && startPage === 1 && chunkSize === 0) {
+    return cached.pages; // full cached result
   }
 
   const pdfBuffer = await ensurePdfCached(fileId);
@@ -71,7 +71,9 @@ export async function findTabelLMPages(fileId) {
   const foundPages = {};
   const details = TARGET_TABLES.map(t => ({ type: t.type, label: t.label, page: null }));
 
-  for (let i = 1; i <= pdf.numPages; i++) {
+  const endPage = chunkSize > 0 ? Math.min(startPage + chunkSize - 1, pdf.numPages) : pdf.numPages;
+
+  for (let i = startPage; i <= endPage; i++) {
     const page = await pdf.getPage(i);
     const textContent = await page.getTextContent();
     const text = textContent.items.map(item => item.str).join(' ');
@@ -94,11 +96,12 @@ export async function findTabelLMPages(fileId) {
     if (Object.keys(foundPages).length === 4) break;
   }
 
+  const isComplete = Object.keys(foundPages).length === 4 || endPage >= pdf.numPages;
   const foundCount = Object.keys(foundPages).length;
-  console.log(`[TabelLM] Found ${foundCount}/4 target pages for ${fileId}`);
+  console.log(`[TabelLM] Chunk ${startPage}-${endPage} (Total ${pdf.numPages}). Found ${foundCount} targets.`);
 
   const result = {
-    detected: foundCount > 0,
+    detected: foundCount > 0, // This might be false for a chunk, we will handle on frontend
     pages: {
       PDPT: foundPages.PDPT || null,
       LR: foundPages.LR || null,
@@ -107,12 +110,17 @@ export async function findTabelLMPages(fileId) {
     },
     foundCount,
     details,
+    isComplete,
+    nextStartPage: isComplete ? null : endPage + 1,
+    totalPages: pdf.numPages
   };
 
-  // Update cache
-  const entry = cache.get(fileId) || { pdfBuffer };
-  entry.pages = result;
-  cache.set(fileId, entry);
+  // Only update final cache if it was a full run or we completed it
+  if (isComplete && startPage === 1 && chunkSize === 0) {
+    const entry = cache.get(fileId) || { pdfBuffer };
+    entry.pages = result;
+    cache.set(fileId, entry);
+  }
 
   return result;
 }

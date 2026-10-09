@@ -164,3 +164,33 @@ export async function uploadFileToFolder(buffer, filename, targetFolderId, mimeT
 
   return res.data;
 }
+
+/**
+ * Update a file buffer in Google Drive.
+ *
+ * @param {string} fileId — The Google Drive file ID to update
+ * @param {Buffer} buffer — The new file content
+ * @param {string} [mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'] — The MIME type
+ * @returns {Promise<{id: string, name: string, webViewLink: string}>}
+ */
+export async function updateFileInDrive(fileId, buffer, mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+  if (!driveClient) throw new Error('Google Drive not initialised');
+
+  const stream = new Readable();
+  stream.push(buffer);
+  stream.push(null);
+
+  const media = {
+    mimeType,
+    body: stream,
+  };
+
+  const res = await driveClient.files.update({
+    fileId,
+    media,
+    fields: 'id, name, webViewLink',
+    supportsAllDrives: true,
+  });
+
+  return res.data;
+}

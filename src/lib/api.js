@@ -91,9 +91,40 @@ export async function getLampiranInfo(fileId) {
  * @returns {Promise<{detected: boolean, pages: object, foundCount: number, details: Array}>}
  */
 export async function getTabelLmInfo(fileId) {
-  const res = await fetch(`${BASE}/api/tabel-lm/${encodeURIComponent(fileId)}/info`);
-  if (!res.ok) throw new Error(`Tabel LM info failed: ${res.statusText}`);
-  return res.json();
+  let startPage = 1;
+  const chunkSize = 20; // 20 pages per request ensures we stay well under 10s limit
+  let finalData = {
+    detected: false,
+    pages: { PDPT: null, LR: null, NERACA: null, ARUS_KAS: null },
+    foundCount: 0,
+    details: [],
+    totalPages: 0
+  };
+
+  while (true) {
+    const res = await fetch(`${BASE}/api/tabel-lm/${encodeURIComponent(fileId)}/info?startPage=${startPage}&chunkSize=${chunkSize}`);
+    if (!res.ok) throw new Error(`Tabel LM info failed: ${res.statusText}`);
+    const data = await res.json();
+    
+    // Merge found pages
+    if (data.pages.PDPT && !finalData.pages.PDPT) finalData.pages.PDPT = data.pages.PDPT;
+    if (data.pages.LR && !finalData.pages.LR) finalData.pages.LR = data.pages.LR;
+    if (data.pages.NERACA && !finalData.pages.NERACA) finalData.pages.NERACA = data.pages.NERACA;
+    if (data.pages.ARUS_KAS && !finalData.pages.ARUS_KAS) finalData.pages.ARUS_KAS = data.pages.ARUS_KAS;
+    
+    finalData.details = data.details;
+    finalData.totalPages = data.totalPages;
+
+    if (data.isComplete || !data.nextStartPage) {
+      break;
+    }
+    startPage = data.nextStartPage;
+  }
+  
+  finalData.foundCount = Object.values(finalData.pages).filter(Boolean).length;
+  finalData.detected = finalData.foundCount > 0;
+  
+  return finalData;
 }
 
 /**

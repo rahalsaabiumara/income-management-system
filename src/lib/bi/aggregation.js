@@ -69,7 +69,14 @@ export function aggregateMetrics(records, mode, year) {
       value = sorted[sorted.length - 1].value;
     } else {
       // FLOW: SUM all months
-      value = recs.reduce((sum, r) => sum + (r.value || 0), 0);
+      // Special logic: If there is an annual target record (from rkap_* tables, identifiable by lack of hyphen in ID),
+      // it should OVERRIDE the sum of monthly targets to prevent double-counting.
+      const yearlyTarget = recs.find(r => r.originalId && !r.originalId.includes('-'));
+      if (yearlyTarget) {
+        value = yearlyTarget.value;
+      } else {
+        value = recs.reduce((sum, r) => sum + (r.value || 0), 0);
+      }
     }
 
     result.set(canonical, {
@@ -106,9 +113,12 @@ export function buildMonthlyData(yearRecords, year) {
 
   for (const [canonical, { records: recs, meta }] of byCanonical) {
     const monthlyValues = [];
+    
+    // Filter out annual targets (from rkap_* tables) so they don't spike December in the line chart
+    const monthlyRecs = recs.filter(r => !r.originalId || r.originalId.includes('-'));
 
     for (let m = 1; m <= 12; m++) {
-      const monthRec = recs.find(r => r.period.month === m);
+      const monthRec = monthlyRecs.find(r => r.period.month === m);
       monthlyValues.push({
         month: m,
         monthLabel: MONTH_NAMES[m - 1],

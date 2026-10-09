@@ -490,7 +490,9 @@ app.get('/api/tabel-lm/:fileId/info', async (req, res) => {
   }
 
   try {
-    const info = await findTabelLMPages(req.params.fileId);
+    const startPage = parseInt(req.query.startPage, 10) || 1;
+    const chunkSize = parseInt(req.query.chunkSize, 10) || 0;
+    const info = await findTabelLMPages(req.params.fileId, startPage, chunkSize);
     return res.json(info);
   } catch (err) {
     console.error('[/api/tabel-lm/:fileId/info] Error:', err);

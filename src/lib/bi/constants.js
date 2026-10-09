@@ -139,6 +139,9 @@ export const CF_MAPPING = {
 
   // Net Change
   'kenaikan (penurunan) bersih kas dan setara kas': { canonical: 'netChange', group: 'position', label: 'Kenaikan (Penurunan) Bersih Kas', type: 'FLOW', isTotal: true },
+  'kas bersih yang diperoleh dari (digunakan untuk) pendanaan::kenaikan (penurunan) bersih kas dan setara kas': { canonical: 'netChange', group: 'position', label: 'Kenaikan (Penurunan) Bersih Kas', type: 'FLOW', isTotal: true },
+  'arus kas dari aktivitas pendanaan::kenaikan (penurunan) bersih kas dan setara kas': { canonical: 'netChange', group: 'position', label: 'Kenaikan (Penurunan) Bersih Kas', type: 'FLOW', isTotal: true },
+  'arus kas dari aktivitas pendanaan::kas bersih yang diperoleh dari (digunakan untuk) pendanaan': { canonical: 'financing.netCashFlow', group: 'financing', label: 'Kas Bersih Aktivitas Pendanaan', type: 'FLOW', isTotal: true },
 
   // FX Impact
   'dampak neto perubahan nilai tukar atas kas dan setara kas': { canonical: 'fxImpact', group: 'position', label: 'Dampak Perubahan Nilai Tukar', type: 'FLOW' },
@@ -202,6 +205,41 @@ export const BS_MAPPING = {
 
   // Total L&E
   'total liabilitas & ekuitas': { canonical: 'totalLiabilitiesEquity', group: 'check', label: 'Total Liabilitas & Ekuitas', type: 'SNAPSHOT', isTotal: true },
+
+  // Added mappings from warnings
+  'liabilitas jangka panjang::total liabilitas jangka panjang': { canonical: 'nonCurrentLiabilities.total', group: 'nonCurrentLiabilities', label: 'Total Liabilitas Jangka Panjang', type: 'SNAPSHOT', isTotal: true },
+  'liabilitas jangka panjang::total liabilitas': { canonical: 'totalLiabilities', group: 'totalLiabilities', label: 'Total Liabilitas', type: 'SNAPSHOT', isTotal: true },
+  'ekuitas yang dapat diatribusikan kepada pemilik entitas induk::total ekuitas': { canonical: 'totalEquity', group: 'totalEquity', label: 'Total Ekuitas', type: 'SNAPSHOT', isTotal: true },
+  'ekuitas yang dapat diatribusikan kepada pemilik entitas induk::total liabilitas & ekuitas': { canonical: 'totalLiabilitiesEquity', group: 'check', label: 'Total Liabilitas & Ekuitas', type: 'SNAPSHOT', isTotal: true },
+  'aset lancar::total aset lancar': { canonical: 'currentAssets.total', group: 'currentAssets', label: 'Total Aset Lancar', type: 'SNAPSHOT', isTotal: true },
+  'aset tidak lancar::total aset tidak lancar': { canonical: 'nonCurrentAssets.total', group: 'nonCurrentAssets', label: 'Total Aset Tidak Lancar', type: 'SNAPSHOT', isTotal: true },
+  'aset tidak lancar::total aset': { canonical: 'totalAssets', group: 'totalAssets', label: 'Total Aset', type: 'SNAPSHOT', isTotal: true },
+  'liabilitas jangka pendek::total liabilitas jangka pendek': { canonical: 'currentLiabilities.total', group: 'currentLiabilities', label: 'Total Liabilitas Jangka Pendek', type: 'SNAPSHOT', isTotal: true },
+  'piutang usaha - neto: pihak-pihak berelasi': { canonical: 'currentAssets.tradeReceivablesRelated', group: 'currentAssets', label: 'Piutang Usaha - Pihak Berelasi', type: 'SNAPSHOT' },
+  'biaya dibayar dimuka dan uang muka': { canonical: 'currentAssets.prepaidExpenses', group: 'currentAssets', label: 'Biaya Dibayar Dimuka & Uang Muka', type: 'SNAPSHOT' },
+  'aset lancar lainnya': { canonical: 'currentAssets.otherCurrentAssets', group: 'currentAssets', label: 'Aset Lancar Lainnya', type: 'SNAPSHOT' },
+  'pajak dibayar di muka': { canonical: 'currentAssets.prepaidTax', group: 'currentAssets', label: 'Pajak Dibayar di Muka', type: 'SNAPSHOT' },
+  'persediaan': { canonical: 'currentAssets.inventory', group: 'currentAssets', label: 'Persediaan', type: 'SNAPSHOT' },
+  'piutang lain-lain - neto: pihak-pihak berelasi': { canonical: 'currentAssets.otherReceivablesRelated', group: 'currentAssets', label: 'Piutang Lain-lain - Pihak Berelasi', type: 'SNAPSHOT' },
+  'piutang lain-lain - neto: pihak ketiga': { canonical: 'currentAssets.otherReceivables3rd', group: 'currentAssets', label: 'Piutang Lain-lain - Pihak Ketiga', type: 'SNAPSHOT' },
+  'piutang usaha - neto: pihak ketiga': { canonical: 'currentAssets.tradeReceivables3rd', group: 'currentAssets', label: 'Piutang Usaha - Pihak Ketiga', type: 'SNAPSHOT' },
+  'kas dan setara kas': { canonical: 'currentAssets.cash', group: 'currentAssets', label: 'Kas dan Setara Kas', type: 'SNAPSHOT' },
+  'biaya yang masih harus dibayar': { canonical: 'currentLiabilities.accruedExpenses', group: 'currentLiabilities', label: 'Biaya Masih Harus Dibayar', type: 'SNAPSHOT' },
+  'total liabilitas jangka pendek::liabilitas imbalan kerja karyawan: program lainnya yang tidak didanai': { canonical: 'nonCurrentLiabilities.employeeBenefits', group: 'nonCurrentLiabilities', label: 'Program Lainnya yang Tidak Didanai', type: 'SNAPSHOT' },
+  'liabilitas pajak tangguhan': { canonical: 'nonCurrentLiabilities.deferredTaxLiability', group: 'nonCurrentLiabilities', label: 'Liabilitas Pajak Tangguhan', type: 'SNAPSHOT' },
+  'total liabilitas::modal dasar: modal ditempatkan dan disetor penuh': { canonical: 'equity.paidUpCapital', group: 'equity', label: 'Modal Ditempatkan & Disetor', type: 'SNAPSHOT' },
+  'total liabilitas::modal dasar: penghasilan komprehensif lain': { canonical: 'equity.oci', group: 'equity', label: 'Penghasilan Komprehensif Lain', type: 'SNAPSHOT' },
+  'total liabilitas::saldo laba: belum ditentukan penggunaannya': { canonical: 'equity.retainedEarnings', group: 'equity', label: 'Saldo Laba', type: 'SNAPSHOT' },
+  'aset tidak lancar': { canonical: 'nonCurrentAssets.total', group: 'nonCurrentAssets', label: 'Total Aset Tidak Lancar', type: 'SNAPSHOT', isTotal: true },
+  'liabilitas jangka pendek': { canonical: 'currentLiabilities.total', group: 'currentLiabilities', label: 'Total Liabilitas Jangka Pendek', type: 'SNAPSHOT', isTotal: true },
+  'liabilitas jangka panjang': { canonical: 'nonCurrentLiabilities.total', group: 'nonCurrentLiabilities', label: 'Total Liabilitas Jangka Panjang', type: 'SNAPSHOT', isTotal: true },
+  'aset tidak lancar::akumulasi penyusutan aset tetap': { canonical: 'nonCurrentAssets.accumulatedDepreciation', group: 'nonCurrentAssets', label: 'Akumulasi Penyusutan Aset Tetap', type: 'SNAPSHOT' },
+  'liabilitas jangka pendek::utang usaha-pihak berelasi': { canonical: 'currentLiabilities.tradePayablesRelated', group: 'currentLiabilities', label: 'Utang Usaha - Pihak Berelasi', type: 'SNAPSHOT' },
+  'liabilitas jangka pendek::utang lain-pihak berelasi': { canonical: 'currentLiabilities.otherPayablesRelated', group: 'currentLiabilities', label: 'Utang Lain - Pihak Berelasi', type: 'SNAPSHOT' },
+  'ekuitas yang dapat diatribusikan kepada pemilik entitas induk::revaluasi asset tetap': { canonical: 'equity.revaluation', group: 'equity', label: 'Revaluasi Aset Tetap', type: 'SNAPSHOT' },
+  'liabilitas jangka panjang::liabilitas imbalan kerja karyawan: dapenbun': { canonical: 'nonCurrentLiabilities.employeeBenefitsDapenbun', group: 'nonCurrentLiabilities', label: 'Imbalan Kerja Karyawan: Dapenbun', type: 'SNAPSHOT' },
+  'liabilitas jangka panjang::utang imbalan kerja jk.panjang': { canonical: 'nonCurrentLiabilities.longTermEmployeeBenefits', group: 'nonCurrentLiabilities', label: 'Utang Imbalan Kerja Jangka Panjang', type: 'SNAPSHOT' },
+  'liabilitas jangka pendek::utang imbalan kerja jk.pendek': { canonical: 'currentLiabilities.shortTermEmployeeBenefits', group: 'currentLiabilities', label: 'Utang Imbalan Kerja Jangka Pendek', type: 'SNAPSHOT' },
 };
 
 // ── Revenue Mapping ──────────────────────────────────────────────

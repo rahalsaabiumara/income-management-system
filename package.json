@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@headlessui/react": "^2.2.10",
     "@heroicons/react": "^2.2.0",
     "@supabase/supabase-js": "^2.115.0",
@@ -19,8 +20,16 @@
     "@tsparticles/engine": "^3.9.1",
     "@tsparticles/react": "^3.0.0",
     "@tsparticles/slim": "^3.9.1",
+    "archiver": "^8.0.0",
     "axios": "^1.19.0",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.6",
+    "exceljs": "^4.4.0",
+    "express": "^5.2.1",
     "framer-motion": "^14.0.0",
+    "googleapis": "^184.0.0",
+    "multer": "^2.4.0",
+    "node-cron": "^4.6.0",
     "papaparse": "^5.6.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^4.10.38",
@@ -28,6 +37,7 @@
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.3",
     "recharts": "^3.10.1",
+    "uuid": "^14.0.2",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

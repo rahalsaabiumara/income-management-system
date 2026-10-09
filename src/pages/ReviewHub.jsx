@@ -92,8 +92,7 @@ export default function ReviewHub() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const headers = { Authorization: `Bearer ${session.access_token}` };
-
-      try { await fetch('/api/documents/sync-cache', { method: 'POST', headers }); } catch (_) { }
+      // sync-cache is disabled in stateless mode
 
       const res = await fetch('/api/documents', { headers });
       if (!res.ok) throw new Error('Failed to fetch documents');
@@ -137,6 +136,10 @@ export default function ReviewHub() {
       const eData = await excelRes.json();
       setExcelData(eData);
       setEditedSheets(JSON.parse(JSON.stringify(eData.sheets)));
+
+      if (eData.sheetNames && eData.sheetNames.length > 0) {
+        setActiveTab(eData.sheetNames.includes('LR') ? 'LR' : eData.sheetNames[0]);
+      }
 
       await fetchComments(doc.id);
     } catch (err) {
