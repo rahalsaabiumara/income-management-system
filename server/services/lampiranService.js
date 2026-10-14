@@ -24,6 +24,33 @@ const TARGET_TABLES = [
   { type: 'ARUS_KAS', keyword: /lampiran\s*3\b/i, keywordNoSpace: /lampiran3/i, label: 'Lampiran 3 (Arus Kas)' },
 ];
 
+let pdfjsPromise = null;
+
+/**
+ * Load pdf.js (legacy Node build) with its worker registered on the main thread.
+ *
+ * In Node pdf.js runs a "fake worker" and, by default, loads it with a dynamic
+ * `import(GlobalWorkerOptions.workerSrc)`. Serverless bundlers (Vercel's file
+ * tracer) cannot see that import, so pdf.worker.mjs is left out of the function
+ * bundle → "Setting up fake worker failed: Cannot find module .../pdf.worker.mjs".
+ * Importing the worker statically and exposing it as `globalThis.pdfjsWorker`
+ * makes pdf.js use it directly (and makes the tracer include the file).
+ */
+export function loadPdfjs() {
+  if (!pdfjsPromise) {
+    pdfjsPromise = (async () => {
+      if (!globalThis.pdfjsWorker) {
+        globalThis.pdfjsWorker = await import('pdfjs-dist/legacy/build/pdf.worker.mjs');
+      }
+      return import('pdfjs-dist/legacy/build/pdf.mjs');
+    })().catch((err) => {
+      pdfjsPromise = null; // allow a retry on the next call
+      throw err;
+    });
+  }
+  return pdfjsPromise;
+}
+
 /**
  * Ensure PDF is downloaded and cached.
  * @param {string} fileId
@@ -60,7 +87,7 @@ export async function findTabelLMPages(fileId, startPage = 1, chunkSize = 0) {
   const pdfBuffer = await ensurePdfCached(fileId);
 
   // Scan PDF text
-  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const pdfjsLib = await loadPdfjs();
   const loadingTask = pdfjsLib.getDocument({
     data: new Uint8Array(pdfBuffer),
     useSystemFonts: true,

@@ -11,6 +11,7 @@ import { buildMonthlyData } from '../../lib/bi/aggregation.js';
 import { buildBreakdownBarData, buildBreakdownBarDataMonthly, formatYTDNote, buildYTDNoteFor } from '../../lib/bi/breakdown.js';
 import { buildTypeKpis } from '../../lib/bi/typeKpi.js';
 import { KPI_TYPE_ORDER } from '../../lib/bi/constants.js';
+import { buildLMRows } from '../../lib/bi/lmRows.js';
 
 /**
  * Hierarchy config for Balance Sheet table.
@@ -154,7 +155,7 @@ function getLabelForKey(key) {
   return opt?.label || key;
 }
 
-export default function SectionBalanceSheet({ data, allRecords, rkapRecords, years, selectedYear, onYearChange, searchTerm, mode = 'annual', onModeChange, ytdMonth = 8, onYtdMonthChange, chartRowRef, chartsCollapsed, onToggleCharts, chartSticky, isShortViewport }) {
+export default function SectionBalanceSheet({ data, allRecords, rkapRecords, years, selectedYear, onYearChange, searchTerm, mode = 'annual', onModeChange, ytdMonth = 8, onYtdMonthChange, tableView = 'analitik', onTableViewChange, chartRowRef, chartsCollapsed, onToggleCharts, chartSticky, isShortViewport }) {
   if (!data) return null;
   const { kpis } = data;
 
@@ -206,6 +207,13 @@ export default function SectionBalanceSheet({ data, allRecords, rkapRecords, yea
     if (!allRecords || !isMonthly) return null;
     return buildHierarchicalTableRowsMonthly(allRecords, monthlyYear, BS_HIERARCHY, rkapRecords, rkapYear);
   }, [allRecords, monthlyYear, rkapRecords, rkapYear, isMonthly]);
+
+  // Laporan Manajemen rows (template order) — same builders/aggregation, active mode only
+  const isLM = tableView === 'lm';
+  const lmRows = useMemo(() => {
+    if (!allRecords || !isLM) return null;
+    return buildLMRows({ sectionKey: 'BS', mode, records: allRecords, rkapRecords, years, rkapYear, ytdMonth, monthlyYear });
+  }, [allRecords, isLM, mode, rkapRecords, years, rkapYear, ytdMonth, monthlyYear]);
 
   // Shared table selection (default package = top-level parent 'Total Aset')
   const annualSel = useRowSelection(tableRows, { defaultParentId: DEFAULT_BAR_PARENTS });
@@ -316,8 +324,9 @@ export default function SectionBalanceSheet({ data, allRecords, rkapRecords, yea
     return buildTypeKpis({
       records: allRecords, rkapRecords, hierarchy: BS_HIERARCHY, year: selectedYear,
       variant: 'balance', typeOrder: KPI_TYPE_ORDER.balanceSheet, profile: 'balanceSheet',
+      ytdMonth: isYTD ? ytdMonth : 12,
     });
-  }, [allRecords, rkapRecords, selectedYear]);
+  }, [allRecords, rkapRecords, selectedYear, isYTD, ytdMonth]);
 
   return (
     <div className="bi-section-stack">
@@ -373,6 +382,9 @@ export default function SectionBalanceSheet({ data, allRecords, rkapRecords, yea
         maxSelections={Infinity}
         canReset={canReset}
         onReset={handleReset}
+        view={tableView}
+        onViewChange={onTableViewChange}
+        lmRows={lmRows}
       />
     </div>
   );

@@ -38,7 +38,7 @@ export async function listFilesInFolder(folderId) {
 
   do {
     const res = await driveClient.files.list({
-      q: `'${folderId}' in parents and mimeType='application/pdf' and trashed=false`,
+      q: `'${folderId}' in parents and trashed=false`,
       fields: 'nextPageToken, files(id, name, mimeType, createdTime)',
       pageSize: 100,
       pageToken,

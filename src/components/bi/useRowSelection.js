@@ -1,6 +1,8 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { getDescendantLeafIds, isLeafRow } from '../../lib/bi/breakdown.js';
 import { SELECTION_LIMIT_MESSAGE, SELECTION_NOTICE_MS, TREND_COLORS } from '../../lib/bi/constants.js';
+import { DEPTH_COLORS } from '../../lib/bi/depthColors.js';
+import { generateShades } from '../../lib/bi/colorShades.js';
 
 /** Default (unselected) state. `colors` holds the sticky line color per selected row. */
 export const DEFAULT_SELECTION_STATE = Object.freeze({ mode: 'default', parentIds: [], leafIds: [], selectedIds: [], colors: {} });
@@ -37,22 +39,49 @@ export function nextSelection(prev, id, isLeaf, max = Infinity) {
   };
 }
 
-/** Keep colors of rows that stay selected; give new rows the first free palette color. */
-function assignColors(ids, prevColors, palette) {
-  const colors = {};
-  for (const id of ids) if (prevColors[id]) colors[id] = prevColors[id];
-  
-  let fallbackIdx = 0;
-  for (const id of ids) {
-    if (colors[id]) continue;
-    const used = new Set(Object.values(colors));
-    let c = palette.find(x => !used.has(x));
-    if (!c) {
-      c = palette[fallbackIdx % palette.length];
-      fallbackIdx++;
-    }
-    colors[id] = c;
+function getBaseColor(row) {
+  if (!row) return null;
+  const hasAccent = row.hasChildren || row.accent === true;
+  if (row.color) return row.color;
+  if (hasAccent && DEPTH_COLORS[row.depth]) return DEPTH_COLORS[row.depth];
+  return null;
+}
+
+function findAncestorColor(rowId, rowsById) {
+  let curr = rowsById.get(rowId);
+  while (curr) {
+    const color = getBaseColor(curr);
+    if (color) return color;
+    curr = rowsById.get(curr.parentId);
   }
+  return '#4B5563'; // fallback gray if somehow nothing found
+}
+
+/** Group selected ids by their ancestor base color, then assign ordered shades. */
+function assignColors(ids, prevColors, rowsById) {
+  const colors = {};
+  const groupedByBase = {};
+
+  for (const id of ids) {
+    const baseColor = findAncestorColor(id, rowsById);
+    if (!groupedByBase[baseColor]) groupedByBase[baseColor] = [];
+    groupedByBase[baseColor].push(id);
+  }
+
+  for (const [baseColor, groupIds] of Object.entries(groupedByBase)) {
+    // Sort so parent/shallower depths come first
+    groupIds.sort((a, b) => {
+      const rowA = rowsById.get(a);
+      const rowB = rowsById.get(b);
+      return (rowA?.depth || 0) - (rowB?.depth || 0);
+    });
+
+    const shades = generateShades(baseColor, groupIds.length);
+    for (let i = 0; i < groupIds.length; i++) {
+      colors[groupIds[i]] = shades[i];
+    }
+  }
+
   return colors;
 }
 
@@ -105,7 +134,7 @@ export function useRowSelection(rows, { defaultParentId = null, flat = false } =
     }
     next.selectedIds = newSelectedIds;
 
-    setState({ ...next, colors: assignColors(newSelectedIds, state.colors, TREND_COLORS.compare) });
+    setState({ ...next, colors: assignColors(newSelectedIds, state.colors, rowsById) });
   }, [state, rowsById, flat, showLimitNotice]);
 
   const reset = useCallback(() => setState(DEFAULT_SELECTION_STATE), []);

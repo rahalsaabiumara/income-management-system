@@ -315,7 +315,7 @@ export const BREAKDOWN_TYPES = {
   pengeluaran: { key: 'pengeluaran', label: 'Pengeluaran', color: '#DC2626', gradient: TYPE_GRADIENTS.red },
   bunga:       { key: 'bunga',       label: 'Bunga',       color: '#2389C4', gradient: TYPE_GRADIENTS.blue },
   pajak:       { key: 'pajak',       label: 'Pajak',       color: '#F28C28', gradient: TYPE_GRADIENTS.orange },
-  aset:        { key: 'aset',        label: 'Aset',        color: '#DC2626', gradient: TYPE_GRADIENTS.red },
+  aset:        { key: 'aset',        label: 'Aset',        color: '#2FA84A', gradient: TYPE_GRADIENTS.green },
   liabilitas:  { key: 'liabilitas',  label: 'Liabilitas',  color: '#2389C4', gradient: TYPE_GRADIENTS.blue },
   ekuitas:     { key: 'ekuitas',     label: 'Ekuitas',     color: '#F28C28', gradient: TYPE_GRADIENTS.orange },
   lainnya:     { key: 'lainnya',     label: 'Lainnya',     color: '#8E9CA3', gradient: TYPE_GRADIENTS.gray },
@@ -332,7 +332,7 @@ export const BREAKDOWN_TYPE_ORDER = {
  * leaves of types not listed here are not part of the KPI strip.
  */
 export const KPI_TYPE_ORDER = {
-  profitLoss:   ['pendapatan', 'pengeluaran', 'bunga', 'pajak'],
+  profitLoss:   ['pendapatan', 'pengeluaran', 'pajak'],
   cashFlow:     ['pendapatan', 'pengeluaran', 'bunga', 'pajak', 'lainnya'],
   balanceSheet: ['aset', 'liabilitas', 'ekuitas'],
 };
@@ -348,9 +348,9 @@ export const KPI_TYPE_ORDER = {
  */
 export const BREAKDOWN_KEYWORD_RULES = [
   { type: 'pajak',       keywords: ['pajak'],                                 phrases: [] },
-  { type: 'bunga',       keywords: ['bunga'],                                 phrases: ['pendapatan keuangan'] },
+  { type: 'bunga',       keywords: ['bunga'],                                 phrases: [] },
   { type: 'pengeluaran', keywords: ['pembayaran', 'pengeluaran', 'beban'],    phrases: [] },
-  { type: 'pendapatan',  keywords: ['penerimaan', 'pendapatan', 'penjualan'], phrases: [] },
+  { type: 'pendapatan',  keywords: ['penerimaan', 'pendapatan', 'penjualan'], phrases: ['pendapatan keuangan'] },
 ];
 
 /**

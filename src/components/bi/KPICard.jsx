@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, Fragment } fr
 import { flushSync } from 'react-dom';
 import { formatCompact, formatFull } from '../../lib/bi/calculations.js';
 import { TypeIcon, Sparkline } from './TypeKpiStrip.jsx';
+import { TYPE_GRADIENTS } from '../../lib/bi/constants.js';
 
 /* ═══════════════════════════════════════════════════════════════════
    Helpers
@@ -127,22 +128,20 @@ export default function KPICard({
     achievement = (Math.abs(value) / Math.abs(rkap)) * 100;
   }
 
-  const gradMap = {
-    green: 'from-emerald-600 to-green-800',
-    blue: 'from-blue-600 to-cyan-800',
-    gold: 'from-amber-500 to-yellow-700',
-    red: 'from-red-500 to-rose-700',
-  };
-
   const entryClass = mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4';
 
   /* ─── HIGHLIGHT Card ─── */
   if (isHighlight) {
+    const from = TYPE_GRADIENTS[color]?.from || TYPE_GRADIENTS.green.from;
+    const to = TYPE_GRADIENTS[color]?.to || TYPE_GRADIENTS.green.to;
     return (
       <div
-        className={`px-3.5 py-3 rounded-xl relative overflow-hidden bg-gradient-to-br ${gradMap[color] || gradMap.green} text-white
+        className={`px-3.5 py-3 rounded-xl relative overflow-hidden text-white
           flex flex-col h-full
           transition-[transform,box-shadow] duration-200 ease-out ${entryClass} shadow-md hover:-translate-y-0.5 hover:shadow-xl`}
+        style={{
+          background: `radial-gradient(circle at 100% 0%, rgba(255,255,255,0.16), rgba(255,255,255,0) 55%), linear-gradient(135deg, ${from}, ${to})`
+        }}
         title={fmtFull(value)}
       >
         <div className="flex items-center gap-1.5 min-w-0 mb-0.5">
@@ -273,7 +272,7 @@ export function KPICardGroup({ children }) {
   const secondaries = childArray.filter(c => !c.props?.isHighlight);
 
   return (
-    <div className="flex gap-[var(--card-gap)] items-stretch transition-all duration-500 ease-out">
+    <div className="flex gap-[var(--card-gap)] items-stretch transition-all duration-500 ease-out" style={{ height: 'var(--kpi-row-h)' }}>
       <div
         className={`flex-shrink-0 transition-all duration-500 ease-out cursor-pointer ${expanded ? 'w-[280px] min-w-[280px]' : 'flex-1'}`}
         onClick={() => setExpanded(prev => !prev)}

@@ -157,13 +157,13 @@ export default function BIDashboard() {
   useEffect(() => {
     if (!realisasiRaw) return;
     try {
-      const vm = buildDashboardViewModel(realisasiRaw, selectedYear, mode);
+      const vm = buildDashboardViewModel(realisasiRaw, selectedYear, mode, ytdMonth);
       setViewModel(vm);
     } catch (err) {
       console.error("Error building view model:", err);
       setError("Gagal memproses data visualisasi.");
     }
-  }, [realisasiRaw, selectedYear, mode]);
+  }, [realisasiRaw, selectedYear, mode, ytdMonth]);
 
   if (loading && !viewModel) {
     return (
@@ -229,6 +229,8 @@ export default function BIDashboard() {
               onModeChange={setMode}
               ytdMonth={ytdMonth}
               onYtdMonthChange={biFilters.setMonth}
+              tableView={biFilters.view}
+              onTableViewChange={biFilters.setView}
               chartRowRef={setChartRowEl}
               chartsCollapsed={chartsCollapsed}
               onToggleCharts={() => setChartsCollapsed(c => !c)}
@@ -249,6 +251,8 @@ export default function BIDashboard() {
               onModeChange={setMode}
               ytdMonth={ytdMonth}
               onYtdMonthChange={biFilters.setMonth}
+              tableView={biFilters.view}
+              onTableViewChange={biFilters.setView}
               chartRowRef={setChartRowEl}
               chartsCollapsed={chartsCollapsed}
               onToggleCharts={() => setChartsCollapsed(c => !c)}
@@ -269,6 +273,8 @@ export default function BIDashboard() {
               onModeChange={setMode}
               ytdMonth={ytdMonth}
               onYtdMonthChange={biFilters.setMonth}
+              tableView={biFilters.view}
+              onTableViewChange={biFilters.setView}
               chartRowRef={setChartRowEl}
               chartsCollapsed={chartsCollapsed}
               onToggleCharts={() => setChartsCollapsed(c => !c)}
@@ -289,6 +295,8 @@ export default function BIDashboard() {
               onModeChange={setMode}
               ytdMonth={ytdMonth}
               onYtdMonthChange={biFilters.setMonth}
+              tableView={biFilters.view}
+              onTableViewChange={biFilters.setView}
               chartRowRef={setChartRowEl}
               chartsCollapsed={chartsCollapsed}
               onToggleCharts={() => setChartsCollapsed(c => !c)}

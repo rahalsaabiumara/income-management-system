@@ -35,8 +35,9 @@ const TABLE_TYPE_TO_SHEET = {
   PDPT: 'PDPT',
 };
 
-// Cache for mappings (read once per process)
+// Cache for mappings (read once per process; reloaded when template.xlsx changes)
 let cachedMappings = null;
+let cachedTemplateMtime = null;
 
 // ──────────────────────────────────────────────────────────────────
 // ALIAS DICTIONARY
@@ -135,6 +136,13 @@ const GLOBAL_ALIASES = {
   'imbalan kerja program lainnya': 'Liabilitas imbalan kerja karyawan: Program lainnya yang tidak didanai',
   'liabilitas pajak tangguhan': 'Liabilitas pajak tangguhan',
   'aset pajak tangguhan': 'Aset pajak tangguhan',
+  // Harus lewat alias: tanpa ini contains-match akan memetakan ke "Aset tetap"
+  'revaluasi aset tetap': 'Revaluasi asset tetap',
+  'revaluasi asset tetap': 'Revaluasi asset tetap',
+  'surplus revaluasi aset tetap': 'Revaluasi asset tetap',
+  'selisih revaluasi aset tetap': 'Revaluasi asset tetap',
+  'cadangan revaluasi aset tetap': 'Revaluasi asset tetap',
+  'surplus revaluasi': 'Revaluasi asset tetap',
 
   // ARUS KAS
   'kas bersih dari operasi': 'Kas bersih yang diperoleh dari (digunakan untuk) operasi',
@@ -157,6 +165,20 @@ const GLOBAL_ALIASES = {
   'kas dan setara kas akhir': 'KAS DAN SETARA KAS AKHIR TAHUN',
   'kas akhir tahun': 'KAS DAN SETARA KAS AKHIR TAHUN',
   'saldo kas akhir': 'KAS DAN SETARA KAS AKHIR TAHUN',
+  'penerimaan bunga': 'Penerimaan bunga',
+  'penerimaan pendapatan bunga': 'Penerimaan bunga',
+  'penerimaan bunga bank': 'Penerimaan bunga',
+  'penerimaan bunga jasa giro': 'Penerimaan bunga',
+  'penerimaan bunga deposito': 'Penerimaan bunga',
+  'bunga yang diterima': 'Penerimaan bunga',
+  'bunga diterima': 'Penerimaan bunga',
+  'penerimaan jasa giro': 'Penerimaan bunga',
+  'buyback saham perkumpulan lpp': 'Buyback saham Perkumpulan LPP',
+  'buyback saham': 'Buyback saham Perkumpulan LPP',
+  'buy back saham': 'Buyback saham Perkumpulan LPP',
+  'buy back saham perkumpulan lpp': 'Buyback saham Perkumpulan LPP',
+  'pembelian kembali saham': 'Buyback saham Perkumpulan LPP',
+  'pembelian kembali saham perkumpulan lpp': 'Buyback saham Perkumpulan LPP',
 };
 
 // Section headers that should NOT receive values
@@ -532,12 +554,17 @@ export function normalizeMonth(monthStr) {
  * @returns {Object.<string, object>} Mapping keyed by table type (LR, ARUS_KAS, NERACA, PDPT)
  */
 export function readAllMappings(forceReload = false) {
-  if (cachedMappings && !forceReload) {
-    return cachedMappings;
-  }
-
   if (!fs.existsSync(TEMPLATE_PATH)) {
     throw new Error(`Template file not found: ${TEMPLATE_PATH}`);
+  }
+
+  // Muat ulang otomatis bila template.xlsx diperbarui (baris ditambah/digeser),
+  // agar posisi baris tidak memakai struktur lama sampai server di-restart.
+  let templateMtime = null;
+  try { templateMtime = fs.statSync(TEMPLATE_PATH).mtimeMs; } catch { /* ignore */ }
+
+  if (cachedMappings && !forceReload && templateMtime === cachedTemplateMtime) {
+    return cachedMappings;
   }
 
   console.log(`[TEMPLATE] Reading template structure from: ${TEMPLATE_PATH}`);
@@ -565,6 +592,7 @@ export function readAllMappings(forceReload = false) {
   );
 
   cachedMappings = mappings;
+  cachedTemplateMtime = templateMtime;
   return mappings;
 }
 

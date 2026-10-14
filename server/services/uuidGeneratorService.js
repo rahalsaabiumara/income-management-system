@@ -16,6 +16,9 @@ const TAG_MAP = {
 
 // Cache for the schema so we don't read exceljs on every request
 let uuidSchemaCache = null;
+// Objek mapping yang dipakai saat cache dibangun; jika templateMapper memuat ulang
+// (template.xlsx berubah), objeknya berbeda dan skema dibangun ulang.
+let uuidSchemaSource = null;
 
 /**
  * Normalise uraian strings for matching.
@@ -34,13 +37,13 @@ function norm(str) {
  * Returns a schema map.
  */
 export async function buildUuidMetadata() {
-  if (uuidSchemaCache) return uuidSchemaCache;
+  const mappings = readAllMappings();
+  if (uuidSchemaCache && uuidSchemaSource === mappings) return uuidSchemaCache;
 
   const TEMPLATE_PATH = path.join(__dirname, '../../src/assets/template.xlsx');
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(TEMPLATE_PATH);
 
-  const mappings = readAllMappings();
   const schema = {};
 
   for (const [tableType, mapData] of Object.entries(mappings)) {
@@ -96,6 +99,7 @@ export async function buildUuidMetadata() {
   }
 
   uuidSchemaCache = schema;
+  uuidSchemaSource = mappings;
   return schema;
 }
 

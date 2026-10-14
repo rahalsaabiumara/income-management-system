@@ -6,18 +6,19 @@ import DataTable from './DataTable.jsx';
 import KPICard, { KPICardGroup } from './KPICard.jsx';
 import { useRowSelection, toLineItems } from './useRowSelection.js';
 import { buildMultiYearBarData, buildQuarterlyBarData, buildHierarchicalTableRows, buildHierarchicalTableRowsQuarterly, buildHierarchicalTableRowsYTD, buildHierarchicalTableRowsMonthly, buildMonthlyTrendData } from '../../lib/bi/viewModel.js';
-import { buildMonthlyData } from '../../lib/bi/aggregation.js';
+import { buildMonthlyData, getEffectiveYTDMonth } from '../../lib/bi/aggregation.js';
 import { formatYTDNote, buildYTDNoteFor } from '../../lib/bi/breakdown.js';
+import { buildLMRows } from '../../lib/bi/lmRows.js';
 
 const REV_HIERARCHY = [
   {
     key: 'total', label: 'Total Pendapatan', color: '#DC2626',
     children: [
-      { key: 'training', label: 'Pelatihan' },
-      { key: 'consulting', label: 'Konsultansi' },
-      { key: 'assessment', label: 'Asesmen & Sertifikasi' },
-      { key: 'digitalBusiness', label: 'Digital Bisnis' },
-      { key: 'hotelMice', label: 'Hotel & MICE' },
+      { key: 'training', label: 'Pelatihan', color: '#2FA84A' },
+      { key: 'consulting', label: 'Konsultansi', color: '#E0A83C' },
+      { key: 'assessment', label: 'Asesmen & Sertifikasi', color: '#7C3AED' },
+      { key: 'digitalBusiness', label: 'Digital Bisnis', color: '#2389C4' },
+      { key: 'hotelMice', label: 'Hotel & MICE', color: '#F59E0B' },
     ],
   },
 ];
@@ -47,7 +48,7 @@ function getLabelForKey(key) {
   return opt?.label || key;
 }
 
-export default function SectionRevenue({ data, allRecords, rkapRecords, years, selectedYear, onYearChange, searchTerm, mode = 'annual', onModeChange, ytdMonth = 8, onYtdMonthChange, chartRowRef, chartsCollapsed, onToggleCharts, chartSticky, isShortViewport }) {
+export default function SectionRevenue({ data, allRecords, rkapRecords, years, selectedYear, onYearChange, searchTerm, mode = 'annual', onModeChange, ytdMonth = 8, onYtdMonthChange, tableView = 'analitik', onTableViewChange, chartRowRef, chartsCollapsed, onToggleCharts, chartSticky, isShortViewport }) {
   if (!data) return null;
   const { kpis, categoryBreakdown } = data;
 
@@ -97,6 +98,13 @@ export default function SectionRevenue({ data, allRecords, rkapRecords, years, s
     if (!allRecords || !isMonthly) return null;
     return buildHierarchicalTableRowsMonthly(allRecords, monthlyYear, REV_HIERARCHY, rkapRecords, rkapYear);
   }, [allRecords, monthlyYear, rkapRecords, rkapYear, isMonthly]);
+
+  // Laporan Manajemen rows (template order) — same builders/aggregation, active mode only
+  const isLM = tableView === 'lm';
+  const lmRows = useMemo(() => {
+    if (!allRecords || !isLM) return null;
+    return buildLMRows({ sectionKey: 'REV', mode, records: allRecords, rkapRecords, years, rkapYear, ytdMonth, monthlyYear });
+  }, [allRecords, isLM, mode, rkapRecords, years, rkapYear, ytdMonth, monthlyYear]);
 
   // Flat selection (every row selectable, no parent/leaf distinction), max 4
   const annualSel = useRowSelection(tableRows, { flat: true });
@@ -207,12 +215,34 @@ export default function SectionRevenue({ data, allRecords, rkapRecords, years, s
     return result;
   }, [allRecords, rkapRecords, selectedYear]);
 
+  // KPI card rows: compare selectedYear against (selectedYear - 1) over the same cumulative period (Jan..m)
+  // where m is the last available month in selectedYear (or clamped to ytdMonth in YTD mode).
+  const kpiData = useMemo(() => {
+    if (!allRecords) return { month: null, rows: [] };
+    const m = getEffectiveYTDMonth(allRecords, selectedYear, isYTD ? ytdMonth : 12);
+    const { rows } = buildHierarchicalTableRowsYTD(
+      allRecords,
+      [selectedYear, selectedYear - 1],
+      REV_HIERARCHY,
+      m || 1,
+      rkapRecords,
+      rkapYear,
+      { clampToAvailable: true }
+    );
+    return { month: m, rows };
+  }, [allRecords, selectedYear, isYTD, ytdMonth, rkapRecords, rkapYear]);
+
   return (
     <div className="bi-section-stack">
       {(() => {
-        const getVal = (key) => { const row = tableRows?.find(r => r.canonical === key); return row?.values?.[selectedYear] ?? null; };
-        const getRkap = (key) => { const row = tableRows?.find(r => r.canonical === key); return row?.rkap?.[rkapYear] ?? null; };
-        const calcTrend = (key) => { const val = getVal(key); const prev = tableRows?.find(r => r.canonical === key)?.values?.[selectedYear - 1] ?? null; return val !== null && prev !== null && prev !== 0 ? ((val - prev) / Math.abs(prev)) * 100 : null; };
+        const activeRows = kpiData.rows;
+        const hasMonth = kpiData.month !== null;
+        const curKey = `YTD_${selectedYear}`;
+        const prevKey = `YTD_${selectedYear - 1}`;
+
+        const getVal = (key) => { if (!hasMonth) return null; const row = activeRows?.find(r => r.canonical === key); return row?.values?.[curKey] ?? null; };
+        const getRkap = (key) => { const row = activeRows?.find(r => r.canonical === key); return row?.rkap?.[rkapYear] ?? null; };
+        const calcTrend = (key) => { const val = getVal(key); const prev = hasMonth ? (activeRows?.find(r => r.canonical === key)?.values?.[prevKey] ?? null) : null; return val !== null && prev !== null && prev !== 0 ? ((val - prev) / Math.abs(prev)) * 100 : null; };
         const achPct = (key) => { const v = Math.abs(getVal(key) ?? 0); const r = Math.abs(getRkap(key) ?? 1); return Math.min((v / r) * 100, 100); };
 
         const segments = [
@@ -224,7 +254,7 @@ export default function SectionRevenue({ data, allRecords, rkapRecords, years, s
         ];
 
         const compItems = segments.map(s => ({ label: s.label, value: getVal(s.key), color: s.color }));
-        
+
         const rawMonthly = getMonthlyDataForKey('total', 'Actual', selectedYear);
         const sparkData = Array.from({ length: 12 }, (_, i) => ({ value: null }));
         rawMonthly.forEach(d => { sparkData[d.month - 1] = { value: d.value }; });
@@ -233,16 +263,16 @@ export default function SectionRevenue({ data, allRecords, rkapRecords, years, s
           // Revenue-only top spacing: KPICardGroup had no top padding and sat flush
           // against the top bar (main has pb only; TypeKpiStrip in other sections has its own pt-1).
           <div className="pt-3.5">
-          <KPICardGroup>
-            <KPICard label="Total Pendapatan" value={getVal('total')} rkap={getRkap('total')} trend={calcTrend('total')} prevYearLabel={`${selectedYear - 1}`} isHighlight color="green" animDelay={0}
-              compositionItems={compItems}
-              typeKey="pendapatan"
-              sparkPoints={sparkData} />
-            {segments.map((seg, i) => (
-              <KPICard key={seg.key} label={seg.label} value={getVal(seg.key)} rkap={getRkap(seg.key)} trend={calcTrend(seg.key)} animDelay={80 + i * 80}
-                donutSegments={[{ percent: achPct(seg.key), color: seg.color }]} accentColor={seg.color} />
-            ))}
-          </KPICardGroup>
+            <KPICardGroup>
+              <KPICard label="Total Pendapatan" value={getVal('total')} rkap={getRkap('total')} trend={calcTrend('total')} prevYearLabel={`${selectedYear - 1}`} isHighlight color="green" animDelay={0}
+                compositionItems={compItems}
+                typeKey="pendapatan"
+                sparkPoints={sparkData} />
+              {segments.map((seg, i) => (
+                <KPICard key={seg.key} label={seg.label} value={getVal(seg.key)} rkap={getRkap(seg.key)} trend={calcTrend(seg.key)} animDelay={80 + i * 80}
+                  donutSegments={[{ percent: achPct(seg.key), color: seg.color }]} accentColor={seg.color} />
+              ))}
+            </KPICardGroup>
           </div>
         );
       })()}
@@ -291,6 +321,9 @@ export default function SectionRevenue({ data, allRecords, rkapRecords, years, s
         maxSelections={Infinity}
         canReset={canReset}
         onReset={handleReset}
+        view={tableView}
+        onViewChange={onTableViewChange}
+        lmRows={lmRows}
       />
     </div>
   );

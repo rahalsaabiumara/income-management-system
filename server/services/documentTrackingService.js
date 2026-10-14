@@ -132,6 +132,29 @@ export async function getDocumentById(id) {
 }
 
 /**
+ * Get the most recent document for a Drive file_id (lightweight columns only).
+ *
+ * @param {string} fileId — Google Drive file ID of the uploaded PDF.
+ * @returns {Promise<object|null>} The document row, or null if not found.
+ */
+export async function getDocumentByFileId(fileId) {
+  const supabase = getClient();
+
+  const { data, error } = await supabase
+    .from('documents')
+    .select('id, file_id, status, excel_file_id, created_at, updated_at')
+    .eq('file_id', fileId)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (error) {
+    throw new Error(`Gagal mengambil dokumen berdasarkan file_id: ${error.message}`);
+  }
+
+  return (data && data[0]) || null;
+}
+
+/**
  * Update the status of a document.
  *
  * @param {string} id — UUID of the document.
@@ -154,6 +177,33 @@ export async function updateDocumentStatus(id, newStatus) {
 
   if (error) {
     throw new Error(`Gagal update status dokumen: ${error.message}`);
+  }
+
+  return data;
+}
+
+/**
+ * Update the excel_file_id of a document.
+ *
+ * @param {string} id — UUID of the document.
+ * @param {string} excelFileId — The new Google Drive ID for the Excel file.
+ * @returns {Promise<object>} The updated document row.
+ */
+export async function updateDocumentExcelId(id, excelFileId) {
+  const supabase = getClient();
+
+  const { data, error } = await supabase
+    .from('documents')
+    .update({
+      excel_file_id: excelFileId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Gagal update excel_file_id dokumen: ${error.message}`);
   }
 
   return data;

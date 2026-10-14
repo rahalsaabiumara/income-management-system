@@ -235,6 +235,7 @@ export const NERACA_SCHEMA = {
     'TOTAL LIABILITAS',
     'Modal dasar: Modal ditempatkan dan disetor penuh',
     'Modal dasar: Penghasilan komprehensif lain',
+    'Revaluasi asset tetap',
     'Saldo laba: Belum ditentukan penggunaannya',
     'TOTAL EKUITAS',
     'TOTAL LIABILITAS & EKUITAS',
@@ -283,9 +284,10 @@ CANONICAL URAIAN YANG TERSEDIA PADA TEMPLATE:
   28. TOTAL LIABILITAS
   29. Modal dasar: Modal ditempatkan dan disetor penuh
   30. Modal dasar: Penghasilan komprehensif lain
-  31. Saldo laba: Belum ditentukan penggunaannya
-  32. TOTAL EKUITAS
-  33. TOTAL LIABILITAS & EKUITAS
+  31. Revaluasi asset tetap
+  32. Saldo laba: Belum ditentukan penggunaannya
+  33. TOTAL EKUITAS
+  34. TOTAL LIABILITAS & EKUITAS
 
 ATURAN MAPPING:
 - Setiap value HARUS dihubungkan dengan URAIAN yang benar pada baris yang sama.
@@ -297,6 +299,7 @@ ATURAN MAPPING:
 - Jika PDF menyebut "Pihak ketiga" di bawah "Piutang usaha", petakan ke "Piutang usaha - neto: Pihak ketiga".
 - Jika PDF menyebut "Modal ditempatkan dan disetor penuh" tanpa "Modal dasar:", petakan ke "Modal dasar: Modal ditempatkan dan disetor penuh".
 - Jika PDF menyebut "Belum ditentukan penggunaannya" di bawah "Saldo laba", petakan ke "Saldo laba: Belum ditentukan penggunaannya".
+- Jika PDF menyebut "Revaluasi aset tetap", "Surplus revaluasi aset tetap", atau "Selisih revaluasi aset tetap" (bagian ekuitas), petakan ke "Revaluasi asset tetap" — JANGAN digabung ke "Aset tetap".
 - Pertimbangkan variasi penamaan, singkatan, dan perbedaan formatting.
 - Jika confidence tidak cukup, tandai status sebagai "UNMATCHED".
 - Jangan membuat nama uraian baru.
@@ -334,6 +337,7 @@ export const ARUS_KAS_SCHEMA = {
     'Pembayaran kas kepada pemasok',
     'Pembayaran kas kepada karyawan',
     'Penerimaan kas lainnya',
+    'Penerimaan bunga',
     'Pembayaran pajak',
     'Pembayaran lain-lain',
     'Kas bersih yang diperoleh dari (digunakan untuk) operasi',
@@ -341,6 +345,7 @@ export const ARUS_KAS_SCHEMA = {
     'Penambahan aset tak berwujud',
     'Kas bersih yang diperoleh dari (digunakan untuk) investasi',
     'Penerimaan setoran modal',
+    'Buyback saham Perkumpulan LPP',
     'Kas Bersih yang diperoleh dari (digunakan untuk) pendanaan',
     'KENAIKAN (PENURUNAN) BERSIH KAS DAN SETARA KAS',
     'DAMPAK NETO PERUBAHAN NILAI TUKAR ATAS KAS DAN SETARA KAS',
@@ -365,18 +370,20 @@ CANONICAL URAIAN YANG TERSEDIA PADA TEMPLATE:
   2. Pembayaran kas kepada pemasok
   3. Pembayaran kas kepada karyawan
   4. Penerimaan kas lainnya
-  5. Pembayaran pajak
-  6. Pembayaran lain-lain
-  7. Kas bersih yang diperoleh dari (digunakan untuk) operasi
-  8. Perolehan aset tetap
-  9. Penambahan aset tak berwujud
-  10. Kas bersih yang diperoleh dari (digunakan untuk) investasi
-  11. Penerimaan setoran modal
-  12. Kas Bersih yang diperoleh dari (digunakan untuk) pendanaan
-  13. KENAIKAN (PENURUNAN) BERSIH KAS DAN SETARA KAS
-  14. DAMPAK NETO PERUBAHAN NILAI TUKAR ATAS KAS DAN SETARA KAS
-  15. KAS DAN SETARA KAS AWAL TAHUN
-  16. KAS DAN SETARA KAS AKHIR TAHUN
+  5. Penerimaan bunga
+  6. Pembayaran pajak
+  7. Pembayaran lain-lain
+  8. Kas bersih yang diperoleh dari (digunakan untuk) operasi
+  9. Perolehan aset tetap
+  10. Penambahan aset tak berwujud
+  11. Kas bersih yang diperoleh dari (digunakan untuk) investasi
+  12. Penerimaan setoran modal
+  13. Buyback saham Perkumpulan LPP
+  14. Kas Bersih yang diperoleh dari (digunakan untuk) pendanaan
+  15. KENAIKAN (PENURUNAN) BERSIH KAS DAN SETARA KAS
+  16. DAMPAK NETO PERUBAHAN NILAI TUKAR ATAS KAS DAN SETARA KAS
+  17. KAS DAN SETARA KAS AWAL TAHUN
+  18. KAS DAN SETARA KAS AKHIR TAHUN
 
 ATURAN MAPPING:
 - Setiap value HARUS dihubungkan dengan URAIAN yang benar pada baris yang sama.
@@ -386,6 +393,8 @@ ATURAN MAPPING:
 - Gunakan canonical URAIAN yang tersedia di atas sebagai target mapping.
 - ABAIKAN section headers: "ARUS KAS DARI AKTIVITAS OPERASI", "ARUS KAS DARI AKTIVITAS INVESTASI", "ARUS KAS DARI AKTIVITAS PENDANAAN" — jangan buat row untuk header ini kecuali ada angka pada header tersebut.
 - Pahami bahwa "Kas bersih..." bisa juga ditulis sebagai "Arus kas bersih dari aktivitas operasi" dll.
+- "Penerimaan bunga" (termasuk variasi "Penerimaan bunga bank/jasa giro/deposito", "Bunga yang diterima") adalah baris TERSENDIRI — jangan digabung ke "Penerimaan kas lainnya".
+- "Buyback saham Perkumpulan LPP" (termasuk variasi "Pembelian kembali saham", "Buy back saham") berada di aktivitas pendanaan — petakan ke "Buyback saham Perkumpulan LPP".
 - Pertimbangkan variasi penamaan, singkatan, tanda kurung.
 - Angka negatif (pembayaran/arus keluar) harus tetap negatif.
 - Angka dalam kurung seperti (1.234) = -1234.

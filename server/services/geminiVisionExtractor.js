@@ -29,6 +29,18 @@ import { normalizeMonth } from './templateMapper.js';
 let apiKeys = [];
 let currentKeyIndex = 0;
 
+// Model utama & cadangan bisa diatur lewat env tanpa ubah kode.
+const PRIMARY_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+const FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || '';
+// Timeout per panggilan Gemini (ms) agar request yang macet tidak menggantung selamanya.
+// Catatan: halaman Neraca (tabel terbesar) bisa butuh > 45 detik saat model sibuk;
+// timeout yang terlalu pendek justru membatalkan request yang sebenarnya hampir selesai.
+const CALL_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS) || 120000;
+// Sisa waktu minimum agar percobaan baru masih layak dimulai sebelum deadline.
+const MIN_ATTEMPT_MS = 20000;
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 /**
  * Get all available API keys from environment.
  */
@@ -92,9 +104,11 @@ function normalizeRow(row) {
  *
  * @param {Buffer} singlePagePdf — PDF buffer containing exactly 1 page
  * @param {string} tableType — 'PDPT' | 'LR' | 'NERACA' | 'ARUS_KAS'
+ * @param {number} [startKeyIndex] — Index API key awal (untuk menyebar beban antar key)
+ * @param {number} [deadline] — Epoch ms; tidak memulai percobaan baru setelah batas ini
  * @returns {Promise<{ tableType: string, bulan: string|null, rows: Array }>}
  */
-export async function extractSingleTable(singlePagePdf, tableType) {
+export async function extractSingleTable(singlePagePdf, tableType, startKeyIndex, deadline) {
   const schema = SCHEMAS[tableType];
   if (!schema) {
     throw new Error(`Unknown table type: ${tableType}`);
@@ -113,38 +127,62 @@ export async function extractSingleTable(singlePagePdf, tableType) {
   ];
 
   let responseText = '';
+  let succeeded = false;
+  let lastError = null;
   const keys = getKeys();
+  let keyIndex = Number.isInteger(startKeyIndex) ? startKeyIndex % keys.length : currentKeyIndex;
   let attempts = 0;
-  const maxAttempts = keys.length * 2; // Allow more attempts for 503 retries
+  const maxAttempts = Math.max(keys.length * 2, 4); // Allow more attempts for 503 retries
 
   while (attempts < maxAttempts) {
+    // Hormati batas waktu total (mis. batas durasi fungsi Vercel)
+    const remaining = deadline ? deadline - Date.now() : Infinity;
+    if (remaining < MIN_ATTEMPT_MS) {
+      console.warn(`[GeminiVision] ${tableType}: sisa waktu ${Math.max(0, Math.round(remaining / 1000))}s, berhenti mencoba (batas waktu pemrosesan).`);
+      if (!lastError) lastError = new Error('Batas waktu pemrosesan tercapai');
+      break;
+    }
+    const attemptTimeout = Math.min(CALL_TIMEOUT_MS, remaining - 2000);
+
+    // Setelah separuh percobaan gagal, pakai model cadangan (jika diatur)
+    const modelName = (FALLBACK_MODEL && attempts >= Math.ceil(maxAttempts / 2)) ? FALLBACK_MODEL : PRIMARY_MODEL;
+    const attemptStartedAt = Date.now();
     try {
-      const client = getClient();
-      const model = client.getGenerativeModel({ model: 'gemini-3.6-flash' });
+      const client = new GoogleGenerativeAI(keys[keyIndex]);
+      const model = client.getGenerativeModel({ model: modelName }, { timeout: attemptTimeout });
 
       const result = await model.generateContent(parts);
       const response = await result.response;
       responseText = response.text();
+      currentKeyIndex = keyIndex;
+      succeeded = true;
+      console.log(`[GeminiVision] ${tableType}: berhasil pada key #${keyIndex} dalam ${Math.round((Date.now() - attemptStartedAt) / 1000)}s`);
       break; // Berhasil, keluar dari loop
     } catch (err) {
-      const isRateLimit = err.message && (err.message.includes('429') || err.message.toLowerCase().includes('quota') || err.message.toLowerCase().includes('limit'));
-      const isServerError = err.message && (err.message.includes('503') || err.message.includes('500') || err.message.includes('502') || err.message.toLowerCase().includes('unavailable'));
+      lastError = err;
+      const msg = (err && err.message) || String(err);
+      const lower = msg.toLowerCase();
+      const isRateLimit = msg.includes('429') || lower.includes('quota') || lower.includes('limit');
+      const isServerError = msg.includes('503') || msg.includes('500') || msg.includes('502') || msg.includes('504') || lower.includes('unavailable') || lower.includes('overloaded') || lower.includes('high demand');
+      const isTimeout = (err && err.name === 'AbortError') || lower.includes('abort') || lower.includes('timeout') || lower.includes('fetch failed');
 
-      if (isRateLimit) {
-        console.warn(`[GeminiVision] Rate limit hit on key index ${currentKeyIndex}. Switching to next key...`);
-        currentKeyIndex = (currentKeyIndex + 1) % keys.length;
+      if (isRateLimit || isServerError || isTimeout) {
+        const kind = isRateLimit ? 'Rate limit' : isTimeout ? `Timeout/network (${Math.round((Date.now() - attemptStartedAt) / 1000)}s)` : 'Server error (5xx)';
+        let delay = isRateLimit ? 500 : Math.min(2000 * (attempts + 1), 8000);
+        if (deadline) delay = Math.max(0, Math.min(delay, deadline - Date.now() - MIN_ATTEMPT_MS));
+        console.warn(`[GeminiVision] ${tableType}: ${kind} on key #${keyIndex} (model ${modelName}): ${msg.substring(0, 200)}. Switching key, retry in ${delay}ms...`);
+        // Pindah ke key berikutnya — 503 "high demand" sering hanya terjadi pada sebagian key/project
+        keyIndex = (keyIndex + 1) % keys.length;
         attempts++;
-      } else if (isServerError) {
-        console.warn(`[GeminiVision] Google API Server Error (5xx). Retrying in 5 seconds...`);
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        attempts++;
+        if (delay > 0) await sleep(delay);
       } else {
         throw err; // Lempar error jika bukan karena limit atau server error
       }
     }
   }
 
-  if (attempts >= maxAttempts) {
+  if (!succeeded) {
+    console.error(`[GeminiVision] ${tableType}: semua percobaan gagal. Error terakhir: ${lastError?.message}`);
     throw new Error('Gagal memproses setelah beberapa kali percobaan (Mencapai batas API limit atau server sedang sibuk). Silakan coba lagi nanti.');
   }
 
@@ -219,24 +257,33 @@ export async function extractSingleTable(singlePagePdf, tableType) {
  * Extract all 4 tables from their respective single-page PDFs.
  *
  * @param {Object.<string, Buffer>} pagePdfs — { PDPT: Buffer, LR: Buffer, NERACA: Buffer, ARUS_KAS: Buffer }
+ * @param {{ deadline?: number }} [options] — deadline (epoch ms) untuk seluruh ekstraksi
  * @returns {Promise<Object.<string, {tableType: string, bulan: string|null, rows: Array}>>}
  */
-export async function extractAllTables(pagePdfs) {
+export async function extractAllTables(pagePdfs, options = {}) {
   const results = {};
+  const keys = getKeys();
+  const entries = Object.entries(pagePdfs);
+  const { deadline } = options;
 
-  for (const [tableType, pdfBuffer] of Object.entries(pagePdfs)) {
+  // Diproses paralel (masing-masing mulai dari key berbeda) agar total waktu
+  // tetap di bawah batas durasi fungsi serverless.
+  await Promise.all(entries.map(async ([tableType, pdfBuffer], i) => {
     if (!pdfBuffer) {
       console.log(`[GeminiVision] Skipping ${tableType} — no page provided`);
-      continue;
+      return;
     }
 
     try {
-      results[tableType] = await extractSingleTable(pdfBuffer, tableType);
+      results[tableType] = await extractSingleTable(pdfBuffer, tableType, (currentKeyIndex + i) % keys.length, deadline);
     } catch (err) {
       console.error(`[GeminiVision] Failed ${tableType}: ${err.message}`);
       results[tableType] = { tableType, bulan: null, rows: [] };
     }
-  }
+  }));
 
-  return results;
+  // Kembalikan dengan urutan kunci yang sama seperti input
+  const ordered = {};
+  for (const [tableType] of entries) if (results[tableType]) ordered[tableType] = results[tableType];
+  return ordered;
 }

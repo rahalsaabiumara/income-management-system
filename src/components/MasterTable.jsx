@@ -165,10 +165,10 @@ export default function MasterTable({ data = [], isLoading = false, selectedRow,
                 </svg>
               )}
               {uploadProps.isUploading ? 'Mengunggah & Memproses...' : 'Upload PDF Laporan'}
-              <input 
-                type="file" 
+              <input
+                type="file"
                 accept="application/pdf"
-                className="hidden" 
+                className="hidden"
                 onChange={uploadProps.handlePdfUpload}
                 disabled={uploadProps.isUploading}
               />
@@ -224,11 +224,11 @@ export default function MasterTable({ data = [], isLoading = false, selectedRow,
           {isLoading ? (
             Array.from({ length: 5 }).map((_, i) => (
               <div key={i} className="animate-pulse flex gap-3 p-4 border rounded-xl bg-gray-50">
-                 <div className="w-10 h-10 bg-gray-200 rounded-lg"></div>
-                 <div className="flex-1 space-y-2">
-                   <div className="h-4 bg-gray-200 rounded w-1/2"></div>
-                   <div className="h-3 bg-gray-200 rounded w-1/4"></div>
-                 </div>
+                <div className="w-10 h-10 bg-gray-200 rounded-lg"></div>
+                <div className="flex-1 space-y-2">
+                  <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+                  <div className="h-3 bg-gray-200 rounded w-1/4"></div>
+                </div>
               </div>
             ))
           ) : paginated.length === 0 ? (
@@ -246,16 +246,15 @@ export default function MasterTable({ data = [], isLoading = false, selectedRow,
               {paginated.map((row, idx) => {
                 const isSelected = selectedRow?.fileId === row.fileId;
                 const yc = row.parsed ? getYearColor(row.parsed.tahun) : null;
-                
+
                 return (
                   <li
                     key={row.fileId || idx}
                     onClick={() => onSelectRow?.(row)}
-                    className={`cursor-pointer group p-4 rounded-xl border transition-all duration-200 ${
-                      isSelected
-                        ? 'border-brand-500 bg-brand-50 shadow-md ring-1 ring-brand-500'
-                        : 'border-gray-200 bg-white hover:border-brand-300 hover:bg-gray-50'
-                    }`}
+                    className={`cursor-pointer group p-4 rounded-xl border transition-all duration-200 ${isSelected
+                      ? 'border-brand-500 bg-brand-50 shadow-md ring-1 ring-brand-500'
+                      : 'border-gray-200 bg-white hover:border-brand-300 hover:bg-gray-50'
+                      }`}
                   >
                     <div className="flex justify-between items-start mb-2">
                       <div className="flex items-center gap-2">
@@ -268,7 +267,7 @@ export default function MasterTable({ data = [], isLoading = false, selectedRow,
                           {row.tanggal || row.parsed?.tanggal || '—'}
                         </span>
                       </div>
-                      
+
                       {/* Actions */}
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         {row.link && (
@@ -301,7 +300,7 @@ export default function MasterTable({ data = [], isLoading = false, selectedRow,
                         )}
                       </div>
                     </div>
-                    
+
                     <h4 className={`text-sm font-bold leading-snug line-clamp-2 ${isSelected ? 'text-brand-900' : 'text-gray-800'}`}>
                       {row.namaStandar || row.parsed?.namaStandar || '—'}
                     </h4>
@@ -368,9 +367,9 @@ export default function MasterTable({ data = [], isLoading = false, selectedRow,
       </div>
 
       {processingReport && (
-        <ProcessingModal 
-          report={processingReport} 
-          onClose={() => setProcessingReport(null)} 
+        <ProcessingModal
+          report={processingReport}
+          onClose={() => setProcessingReport(null)}
         />
       )}
     </>

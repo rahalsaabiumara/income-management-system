@@ -17,7 +17,7 @@ import XLSX from 'xlsx';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
-import { uploadFileToFolder, downloadFile, updateFileInDrive } from '../services/googleDrive.js';
+import { uploadFileToFolder, downloadFile, updateFileInDrive, listFilesInFolder } from '../services/googleDrive.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -35,10 +35,17 @@ import {
 
 const router = Router();
 
-const EXCEL_CACHE_DIR = path.join(__dirname, '..', 'data', 'excel-cache');
+// Di Vercel filesystem bersifat read-only kecuali /tmp.
+const DATA_DIR = process.env.VERCEL ? '/tmp' : path.join(__dirname, '..', 'data');
+const EXCEL_CACHE_DIR = path.join(DATA_DIR, 'excel-cache');
+const TABULAR_DIR = path.join(DATA_DIR, 'tabular');
 
-if (!fs.existsSync(EXCEL_CACHE_DIR)) {
-  fs.mkdirSync(EXCEL_CACHE_DIR, { recursive: true });
+try {
+  if (!fs.existsSync(EXCEL_CACHE_DIR)) {
+    fs.mkdirSync(EXCEL_CACHE_DIR, { recursive: true });
+  }
+} catch (e) {
+  console.warn('[DocumentRoutes] Tidak dapat membuat folder excel-cache:', e.message);
 }
 
 // Gunakan memoryStorage agar file yang diupload dapat langsung diunggah ke Google Drive tanpa mampir di lokal
@@ -209,15 +216,47 @@ router.get(
         })));
       }
 
-      const docs = await listDocuments(status ? { status } : {});
+      let docs = await listDocuments(status ? { status } : {});
+
+      // Cross-reference with Google Drive
+      try {
+        const excelFolderId = process.env.GOOGLE_DRIVE_EXCEL_FOLDER_ID;
+        const pdfFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID || '1sLR2NSLCCSrlS1nBcxaMp2ko7B9YwOze'; // DEFAULT_TARGET_FOLDER_ID
+        
+        let driveFileIds = new Set();
+        
+        if (excelFolderId) {
+          const excelFiles = await listFilesInFolder(excelFolderId);
+          excelFiles.forEach(f => driveFileIds.add(f.id));
+        }
+        
+        if (pdfFolderId) {
+          const pdfFiles = await listFilesInFolder(pdfFolderId);
+          pdfFiles.forEach(f => driveFileIds.add(f.id));
+        }
+        
+        // Filter docs: keep if it's NOT a drive ID (e.g. local cache) or if it exists in Drive
+        docs = docs.filter(d => {
+          // Check if either the excel_file_id or file_id exists in Drive
+          const driveIdToCheck = d.excel_file_id || d.file_id;
+          const isDriveId = driveIdToCheck && driveIdToCheck.length > 25;
+          if (!isDriveId) return true;
+          // If they uploaded a PDF, file_id is in pdfFolder, and excel_file_id is in excelFolder
+          return driveFileIds.has(d.file_id) || (d.excel_file_id && driveFileIds.has(d.excel_file_id));
+        });
+      } catch (err) {
+        console.warn('[DocumentRoutes] Failed to cross-reference with Drive:', err.message);
+        // Fallback: just return DB docs if Drive API fails
+      }
 
       // Enrich with has_excel_cache flag
       const enriched = docs.map(d => {
-        // Jika file_id terlihat panjang (Google Drive ID biasanya > 25 karakter), maka file tersebut valid.
-        // Jika pendek (sebelumnya pakai UUID atau nama acak), cek di direktori cache lokal.
+        // Jika memiliki excel_file_id, atau file_id adalah Drive ID, atau ada di lokal
+        const hasExcelInDrive = d.excel_file_id && d.excel_file_id.length > 25;
         const isDriveId = d.file_id && d.file_id.length > 25;
-        const hasCache = isDriveId || (d.file_id && fs.existsSync(path.join(EXCEL_CACHE_DIR, `${d.file_id}.xlsx`)));
-        return { ...d, has_excel_cache: hasCache };
+        // Kita cek if excel exists in Drive OR if it's a direct Excel upload (where file_id is the excel) OR if local cache exists
+        const hasCache = hasExcelInDrive || isDriveId || (d.file_id && fs.existsSync(path.join(EXCEL_CACHE_DIR, `${d.file_id}.xlsx`)));
+        return { ...d, has_excel_cache: Boolean(hasCache) };
       });
 
       return res.json(enriched);
@@ -406,7 +445,7 @@ router.post(
       // Check if Excel Cache exists and is valid
       const isDriveId = doc.file_id && doc.file_id.length > 25;
       if (!isDriveId) {
-        const excelPath = path.join(__dirname, '..', 'data', 'excel-cache', `${doc.file_id}.xlsx`);
+        const excelPath = path.join(EXCEL_CACHE_DIR, `${doc.file_id}.xlsx`);
         if (!fs.existsSync(excelPath)) {
           return res.status(404).json({ error: 'File Excel Cache tidak ditemukan.' });
         }
@@ -447,13 +486,14 @@ router.post(
       }
 
       // Cek apakah file ada di Google Drive (jika ID panjang) atau di Lokal
-      const isDriveId = doc.file_id && doc.file_id.length > 25;
-      const excelPath = path.join(__dirname, '..', 'data', 'excel-cache', `${doc.file_id}.xlsx`);
+      const driveIdToCheck = doc.excel_file_id || doc.file_id;
+      const isDriveId = driveIdToCheck && driveIdToCheck.length > 25;
+      const excelPath = path.join(EXCEL_CACHE_DIR, `${doc.file_id}.xlsx`);
       
       let excelBuffer = null;
       if (isDriveId) {
         try {
-          excelBuffer = await downloadFile(doc.file_id);
+          excelBuffer = await downloadFile(driveIdToCheck);
         } catch (e) {
           return res.status(404).json({ error: 'File Excel tidak ditemukan di Google Drive.' });
         }
@@ -481,12 +521,19 @@ router.post(
       console.log(`[Send:${doc.id}] Transforming Excel to Tabular...`);
       // Pass excelBuffer directly if from Drive, else fallback to path reading
       // Note: we need to adjust transformExcelToTabular to accept a buffer or we write it to tmp
-      const tmpPath = path.join(__dirname, '..', 'data', 'tabular', `tmp-${doc.file_id}.xlsx`);
-      if (isDriveId && excelBuffer) {
-        fs.writeFileSync(tmpPath, excelBuffer);
+      const tmpPath = path.join(TABULAR_DIR, `tmp-${doc.file_id}.xlsx`);
+      let records;
+      try {
+        if (isDriveId && excelBuffer) {
+          if (!fs.existsSync(TABULAR_DIR)) fs.mkdirSync(TABULAR_DIR, { recursive: true });
+          fs.writeFileSync(tmpPath, excelBuffer);
+        }
+        records = await transformExcelToTabular(isDriveId ? tmpPath : excelPath, report);
+      } finally {
+        if (isDriveId && fs.existsSync(tmpPath)) {
+          try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+        }
       }
-      const records = await transformExcelToTabular(isDriveId ? tmpPath : excelPath, report);
-      if (isDriveId && fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
       
       if (records.length === 0) {
         return res.status(422).json({ error: 'Tidak ada data tabular dari Excel Cache.' });
@@ -535,7 +582,7 @@ router.post(
 
       // STEP 6: Save tabular locally
       try {
-        const tabDir = path.join(__dirname, '..', 'data', 'tabular');
+        const tabDir = TABULAR_DIR;
         if (!fs.existsSync(tabDir)) fs.mkdirSync(tabDir, { recursive: true });
         const fname = `${doc.nama || doc.file_id}.json`.replace(/[/\\:*?"<>|]/g, '-');
         fs.writeFileSync(path.join(tabDir, fname), JSON.stringify({
@@ -580,18 +627,19 @@ router.get(
         return res.status(404).json({ error: 'Dokumen tidak ditemukan atau tidak memiliki file excel.' });
       }
 
-      const isDriveId = doc.file_id && doc.file_id.length > 25;
-      const excelPath = path.join(__dirname, '..', 'data', 'excel-cache', `${doc.file_id}.xlsx`);
+      const driveIdToCheck = doc.excel_file_id || doc.file_id;
+      const isDriveId = driveIdToCheck && driveIdToCheck.length > 25;
+      const excelPath = path.join(EXCEL_CACHE_DIR, `${doc.file_id}.xlsx`);
       
       let workbook;
       let version = Date.now(); // Dummy version for Drive files
 
       if (isDriveId) {
         try {
-          const buffer = await downloadFile(doc.file_id);
+          const buffer = await downloadFile(driveIdToCheck);
           workbook = XLSX.read(buffer, { type: 'buffer' });
         } catch (e) {
-          return res.status(404).json({ error: `File excel cache di Google Drive tidak ditemukan untuk ID ${doc.file_id}.` });
+          return res.status(404).json({ error: `File excel cache di Google Drive tidak ditemukan untuk ID ${driveIdToCheck}.` });
         }
       } else {
         if (!fs.existsSync(excelPath)) {
@@ -603,14 +651,25 @@ router.get(
       }
 
       const result = {};
+      // Top-left origin of each sheet's used range (0-based). Lets the client map
+      // array row/col indexes back to real Excel addresses (e.g. index 8 → A9).
+      const sheetOrigins = {};
 
       workbook.SheetNames.forEach(sheetName => {
         const sheet = workbook.Sheets[sheetName];
-        const json = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
+        const json = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, blankrows: true });
         result[sheetName] = json;
+        let origin = { r: 0, c: 0 };
+        try {
+          if (sheet['!ref']) {
+            const range = XLSX.utils.decode_range(sheet['!ref']);
+            origin = { r: range.s.r, c: range.s.c };
+          }
+        } catch { /* keep default A1 origin */ }
+        sheetOrigins[sheetName] = origin;
       });
 
-      return res.json({ sheets: result, sheetNames: workbook.SheetNames, version });
+      return res.json({ sheets: result, sheetNames: workbook.SheetNames, sheetOrigins, version });
     } catch (err) {
       console.error('[DocumentRoutes] GET /:id/excel-data error:', err.message);
       return res.status(500).json({ error: err.message });
@@ -635,7 +694,7 @@ router.put(
       }
 
       const doc = await getDocumentById(req.params.id);
-      if (!doc || !doc.file_id) {
+      if (!doc || (!doc.file_id && !doc.excel_file_id)) {
         return res.status(404).json({ error: 'Dokumen tidak ditemukan.' });
       }
 
@@ -644,15 +703,16 @@ router.put(
         return res.status(400).json({ error: 'Dokumen sudah POSTED, tidak dapat diedit.' });
       }
 
-      const isDriveId = doc.file_id && doc.file_id.length > 25;
-      const excelPath = path.join(__dirname, '..', 'data', 'excel-cache', `${doc.file_id}.xlsx`);
+      const fileId = doc.excel_file_id || doc.file_id;
+      const isDriveId = fileId && fileId.length > 25;
+      const excelPath = path.join(EXCEL_CACHE_DIR, `${fileId}.xlsx`);
       
       let workbook;
       let currentVersion = Date.now();
 
       if (isDriveId) {
         try {
-          const buffer = await downloadFile(doc.file_id);
+          const buffer = await downloadFile(fileId);
           workbook = XLSX.read(buffer, { type: 'buffer', cellStyles: true, cellDates: true });
         } catch (e) {
           return res.status(404).json({ error: 'File Excel Cache di Google Drive tidak ditemukan.' });
@@ -708,7 +768,7 @@ router.put(
       if (isDriveId) {
         // Build buffer and update drive
         const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
-        await updateFileInDrive(doc.file_id, buffer);
+        await updateFileInDrive(fileId, buffer);
       } else {
         XLSX.writeFile(workbook, excelPath);
         currentVersion = fs.statSync(excelPath).mtimeMs;

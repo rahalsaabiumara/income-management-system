@@ -4,16 +4,20 @@ import { useCallback, useMemo } from 'react';
 const VALID_MODES = ['annual', 'quarterly', 'ytd', 'monthly'];
 const DEFAULT_MODE = 'annual';
 
+/** Table card view: 'analitik' (hierarchy, default) or 'lm' (Laporan Manajemen). */
+const VALID_VIEWS = ['analitik', 'lm'];
+const DEFAULT_VIEW = 'analitik';
+
 /**
  * useBIFilters — single-source-of-truth hook for BI dashboard filters.
  *
- * Reads and writes URL query params: year, mode, month.
+ * Reads and writes URL query params: year, mode, month, view.
  * Params that equal their default are omitted from the URL.
  *
  * @param {Object} opts
  * @param {number[]} opts.availableYears — sorted desc (latest first)
  * @param {number}   [opts.latestMonth]  — last month with data (1-12), used as default for YTD month
- * @returns {{ year, mode, month, setYear, setMode, setMonth, availableYears }}
+ * @returns {{ year, mode, month, view, setYear, setMode, setMonth, setView, availableYears }}
  */
 export default function useBIFilters({ availableYears = [], latestMonth = 8 } = {}) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -44,6 +48,12 @@ export default function useBIFilters({ availableYears = [], latestMonth = 8 } = 
     return n;
   }, [searchParams, defaultMonth]);
 
+  const view = useMemo(() => {
+    const raw = searchParams.get('view');
+    if (!raw || !VALID_VIEWS.includes(raw)) return DEFAULT_VIEW;
+    return raw;
+  }, [searchParams]);
+
   // ── Write helpers ──
   // We use a functional updater that merges with the current params,
   // stripping defaults to keep the URL clean.
@@ -61,6 +71,7 @@ export default function useBIFilters({ availableYears = [], latestMonth = 8 } = 
       if (next.get('year') === String(defaultYear)) next.delete('year');
       if (next.get('mode') === DEFAULT_MODE || !next.get('mode')) next.delete('mode');
       if (next.get('month') === String(defaultMonth)) next.delete('month');
+      if (!VALID_VIEWS.includes(next.get('view')) || next.get('view') === DEFAULT_VIEW) next.delete('view');
       return next;
     }, { replace: true });
   }, [setSearchParams, defaultYear, defaultMonth]);
@@ -68,14 +79,17 @@ export default function useBIFilters({ availableYears = [], latestMonth = 8 } = 
   const setYear = useCallback((y) => updateParams({ year: y }), [updateParams]);
   const setMode = useCallback((m) => updateParams({ mode: m }), [updateParams]);
   const setMonth = useCallback((m) => updateParams({ month: m }), [updateParams]);
+  const setView = useCallback((v) => updateParams({ view: v }), [updateParams]);
 
   return useMemo(() => ({
     year,
     mode,
     month,
+    view,
     setYear,
     setMode,
     setMonth,
+    setView,
     availableYears
-  }), [year, mode, month, setYear, setMode, setMonth, availableYears]);
+  }), [year, mode, month, view, setYear, setMode, setMonth, setView, availableYears]);
 }

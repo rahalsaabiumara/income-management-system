@@ -38,9 +38,9 @@ const fmtPct = (v) => (hasValue(v) ? `${v.toFixed(1)}%` : '-');
  * @param {'profitLoss'|'cashFlow'|'balanceSheet'} p.profile - insight profile
  * @returns {{ month: number|null, pace: number|null, types: Array }}
  */
-export function buildTypeKpis({ records, rkapRecords, hierarchy, year, variant, typeOrder, profile }) {
+export function buildTypeKpis({ records, rkapRecords, hierarchy, year, variant, typeOrder, profile, ytdMonth }) {
   const recs = records || [];
-  const m = getEffectiveYTDMonth(recs, year, 12); // last month with data in the year
+  const m = getEffectiveYTDMonth(recs, year, ytdMonth || 12); // last month with data up to ytdMonth
   const isBalance = variant === 'balance';
   const pace = !isBalance && m && m < 12 ? (m / 12) * 100 : null;
 
@@ -49,7 +49,7 @@ export function buildTypeKpis({ records, rkapRecords, hierarchy, year, variant, 
   const prevKey = `YTD_${year - 1}`;
   const hasRkap = rkapRecords && rkapRecords.length > 0;
   const cur = buildHierarchicalTableRowsYTD(recs, [year], hierarchy, m || 1, hasRkap ? rkapRecords : null, hasRkap ? year : null);
-  const prev = m ? buildHierarchicalTableRowsYTD(recs, [year - 1], hierarchy, m) : null;
+  const prev = m ? buildHierarchicalTableRowsYTD(recs, [year - 1], hierarchy, m, null, null, { clampToAvailable: true }) : null;
   const prevById = new Map((prev?.rows || []).map(r => [r.id, r]));
   const rows = cur.rows;
   const rowsById = new Map(rows.map(r => [r.id, r]));

@@ -20,7 +20,7 @@ import { MONTH_NAMES, QUARTER_MONTHS } from './constants.js';
  * @param {'annual'|'quarterly'} mode
  * @returns {object} viewModel ready for UI consumption
  */
-export function buildDashboardViewModel(rawData, year, mode = 'annual') {
+export function buildDashboardViewModel(rawData, year, mode = 'annual', ytdMonth = 8) {
   // Step 1: Map all sections
   const allMapped = mapAllSections(rawData);
 
@@ -41,10 +41,10 @@ export function buildDashboardViewModel(rawData, year, mode = 'annual') {
   }
 
   // Step 3: Build section view models
-  const cashFlow = buildCashFlowVM(allDeduped.CF, year, mode);
-  const profitLoss = buildProfitLossVM(allDeduped.LR, year, mode);
-  const balanceSheet = buildBalanceSheetVM(allDeduped.BS, year, mode);
-  const revenue = buildRevenueVM(allDeduped.REV, year, mode);
+  const cashFlow = buildCashFlowVM(allDeduped.CF, year, mode, ytdMonth);
+  const profitLoss = buildProfitLossVM(allDeduped.LR, year, mode, ytdMonth);
+  const balanceSheet = buildBalanceSheetVM(allDeduped.BS, year, mode, ytdMonth);
+  const revenue = buildRevenueVM(allDeduped.REV, year, mode, ytdMonth);
 
   return {
     cashFlow,
@@ -63,9 +63,9 @@ export function buildDashboardViewModel(rawData, year, mode = 'annual') {
 
 // ── Cash Flow View Model ─────────────────────────────────────────
 
-function buildCashFlowVM(records, year, mode) {
+function buildCashFlowVM(records, year, mode, ytdMonth) {
   const yearRecs = filterByYear(records, year);
-  const annual = aggregateMetrics(records, 'annual', year);
+  const annual = mode === 'ytd' ? aggregateYTD(records, year, ytdMonth, { clampToAvailable: true }) : aggregateMetrics(records, 'annual', year);
   const monthly = buildMonthlyData(yearRecs, year);
 
   const getValue = (key) => annual.get(key)?.value ?? null;
@@ -134,8 +134,8 @@ function buildCashFlowVM(records, year, mode) {
 
 // ── Profit & Loss View Model ─────────────────────────────────────
 
-function buildProfitLossVM(records, year, mode) {
-  const annual = aggregateMetrics(records, 'annual', year);
+function buildProfitLossVM(records, year, mode, ytdMonth) {
+  const annual = mode === 'ytd' ? aggregateYTD(records, year, ytdMonth, { clampToAvailable: true }) : aggregateMetrics(records, 'annual', year);
   const yearRecs = filterByYear(records, year);
   const monthly = buildMonthlyData(yearRecs, year);
 
@@ -146,8 +146,11 @@ function buildProfitLossVM(records, year, mode) {
   const operatingProfit = getValue('operatingProfit');
   const netIncome = getValue('netIncome');
 
-  // Calculate previous year for growth
-  const prevAnnual = aggregateMetrics(records, 'annual', year - 1);
+  // Calculate previous year for growth (compare up to effective last month of selected year)
+  const effMonth = getEffectiveYTDMonth(records, year, mode === 'ytd' ? ytdMonth : 12);
+  const prevAnnual = effMonth
+    ? aggregateYTD(records, year - 1, effMonth, { clampToAvailable: true })
+    : aggregateMetrics(records, 'annual', year - 1);
   const prevRevenue = prevAnnual.get('revenue')?.value ?? null;
   const revenueGrowth = calcGrowth(revenue, prevRevenue);
 
@@ -208,8 +211,8 @@ function buildProfitLossVM(records, year, mode) {
 
 // ── Balance Sheet View Model ─────────────────────────────────────
 
-function buildBalanceSheetVM(records, year, mode) {
-  const annual = aggregateMetrics(records, 'annual', year);
+function buildBalanceSheetVM(records, year, mode, ytdMonth) {
+  const annual = mode === 'ytd' ? aggregateYTD(records, year, ytdMonth, { clampToAvailable: true }) : aggregateMetrics(records, 'annual', year);
   const yearRecs = filterByYear(records, year);
   const monthly = buildMonthlyData(yearRecs, year);
 
@@ -285,15 +288,18 @@ function buildBalanceSheetVM(records, year, mode) {
 
 // ── Revenue View Model ───────────────────────────────────────────
 
-function buildRevenueVM(records, year, mode) {
-  const annual = aggregateMetrics(records, 'annual', year);
+function buildRevenueVM(records, year, mode, ytdMonth) {
+  const annual = mode === 'ytd' ? aggregateYTD(records, year, ytdMonth, { clampToAvailable: true }) : aggregateMetrics(records, 'annual', year);
   const yearRecs = filterByYear(records, year);
   const monthly = buildMonthlyData(yearRecs, year);
 
   const getValue = (key) => annual.get(key)?.value ?? null;
 
   const totalRevenue = getValue('total');
-  const prevAnnual = aggregateMetrics(records, 'annual', year - 1);
+  const effMonth = getEffectiveYTDMonth(records, year, mode === 'ytd' ? ytdMonth : 12);
+  const prevAnnual = effMonth
+    ? aggregateYTD(records, year - 1, effMonth, { clampToAvailable: true })
+    : aggregateMetrics(records, 'annual', year - 1);
   const prevRevenue = prevAnnual.get('total')?.value ?? null;
   const revenueGrowth = calcGrowth(totalRevenue, prevRevenue);
 

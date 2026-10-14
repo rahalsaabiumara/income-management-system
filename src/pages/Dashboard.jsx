@@ -1,11 +1,11 @@
 import { useState, useCallback, useEffect } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import ProcessingModal from '../components/ProcessingModal.jsx';
 import MasterTable from '../components/MasterTable.jsx';
 import LampiranViewer from '../components/LampiranViewer.jsx';
 import ExcelConvertModal from '../components/ExcelConvertModal.jsx';
 import BatchConvertModal from '../components/BatchConvertModal.jsx';
-import { fetchMaster, checkAuthStatus, getAuthUrl, uploadAndProcessPdf } from '../lib/api.js';
+import { fetchMaster, checkAuthStatus, getAuthUrl } from '../lib/api.js';
 import { parseLMName, sortKey } from '../lib/dateParser.js';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
@@ -44,17 +44,13 @@ function generateDummyData() {
  */
 export default function Dashboard() {
   const { user, fullName, logout, role } = useAuth();
-  const queryClient = useQueryClient();
   const [lampiranRow, setLampiranRow] = useState(null);
   const [excelConvertRow, setExcelConvertRow] = useState(null);
   const [processingReport, setProcessingReport] = useState(null);
   const [batchModalOpen, setBatchModalOpen] = useState(false);
   const [localData, setLocalData] = useState(null); // For local data override
 
-  // PDF Upload State (Admin only)
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadError, setUploadError] = useState(null);
-  const [uploadSuccess, setUploadSuccess] = useState(false);
+  // PDF Upload has been moved to ReviewHub (next to "Upload File Excel")
 
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -115,50 +111,12 @@ export default function Dashboard() {
     }
   };
 
-  const handlePdfUpload = async (e) => {
-    const file = e.target.files?.[0];
-
-    // Reset file input so the same file can be selected again and to prevent duplicate triggers
-    e.target.value = null;
-
-    if (!file) return;
-
-    if (file.type !== 'application/pdf') {
-      setUploadError('Hanya file PDF yang diperbolehkan.');
-      return;
-    }
-
-    setIsUploading(true);
-    setUploadError(null);
-    setUploadSuccess(false);
-
-    try {
-      // Kita panggil API yang akan upload ke Drive lalu initiate processing
-      const res = await uploadAndProcessPdf(file);
-
-      setUploadSuccess(true);
-      // Timeout to clear success message
-      setTimeout(() => setUploadSuccess(false), 5000);
-
-      // Optionally refresh the table if needed
-      queryClient.invalidateQueries({ queryKey: ['master'] });
-
-    } catch (err) {
-      console.error('Upload failed:', err);
-      setUploadError(err.message || 'Gagal mengunggah file.');
-    } finally {
-      setIsUploading(false);
-      // Reset input
-      e.target.value = '';
-    }
-  };
-
   return (
     <div className="bg-gray-50 flex-1">
       {/* ── Main Content ──────────────────────────────── */}
       <main className="w-full mx-auto px-4 sm:px-6 py-6 flex flex-col h-[calc(100vh-var(--topbar-h))]">
 
-        {/* Upload PDF is now handled inside the Sidebar/MasterTable area */}
+        {/* Upload PDF is now handled in ReviewHub (next to Upload File Excel) */}
 
         {/* Auth notice */}
         {authStatus && !isAuthReady && (
@@ -225,12 +183,6 @@ export default function Dashboard() {
               selectedRow={lampiranRow}
               onSelectRow={handleViewLampiran}
               role={role}
-              uploadProps={role === 'ADMIN' ? {
-                isUploading,
-                uploadError,
-                uploadSuccess,
-                handlePdfUpload
-              } : null}
             />
           </div>
 

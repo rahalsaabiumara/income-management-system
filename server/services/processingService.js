@@ -7,7 +7,7 @@ import { validateTabularRecords } from './tabularValidationService.js';
 import { upsertToGoogleSheets } from './googleSheets.js';
 import { syncAllSheetsToSupabase } from './supabaseSyncService.js';
 import { buildUuidMetadata } from './uuidGeneratorService.js';
-import { updateDocumentStatus } from './documentTrackingService.js';
+import { updateDocumentStatus, updateDocumentExcelId } from './documentTrackingService.js';
 
 import fs from 'fs';
 import { isSupabaseConfigured } from './supabaseClient.js';
@@ -22,10 +22,50 @@ const TABULAR_DATA_DIR = process.env.VERCEL ? path.join('/tmp', 'tabular') : pat
 const processingLocks = new Map();
 const processingStatuses = new Map();
 
+// Anggaran waktu untuk langkah ekstraksi Gemini. Di Vercel, fungsi dihentikan paksa
+// setelah maxDuration (300 dtk), jadi ekstraksi harus berhenti lebih awal agar Excel
+// tetap sempat ditulis, diunggah ke Drive, dan status dokumen diperbarui.
+const EXTRACTION_BUDGET_MS = Number(process.env.EXTRACTION_BUDGET_MS)
+  || (process.env.VERCEL ? 230000 : 330000);
+
 function updateStatus(reportId, status, details = {}) {
   const current = processingStatuses.get(reportId) || {};
   processingStatuses.set(reportId, { ...current, status, ...details, updatedAt: Date.now() });
   console.log(`[Processing:${reportId}] Status updated to: ${status}`);
+}
+
+async function uploadExcelToDriveUsingGAS(excelBuffer, filename) {
+  const gasUrl = process.env.GAS_UPLOAD_URL;
+  const folderId = process.env.GOOGLE_DRIVE_EXCEL_FOLDER_ID;
+
+  if (!gasUrl) throw new Error('GAS_UPLOAD_URL tidak ditemukan di environment.');
+  if (!folderId) throw new Error('GOOGLE_DRIVE_EXCEL_FOLDER_ID tidak ditemukan di environment.');
+
+  const base64Data = excelBuffer.toString('base64');
+  const payload = {
+    data: base64Data,
+    filename: filename,
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    folderId: folderId
+  };
+
+  const gasResponse = await fetch(gasUrl, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    headers: { 'Content-Type': 'application/json' }
+  });
+
+  const contentType = gasResponse.headers.get('content-type') || '';
+  if (contentType.includes('text/html')) {
+    throw new Error(`Google Apps Script URL requires login (returned HTML).`);
+  }
+
+  const gasResult = await gasResponse.json();
+  if (!gasResult.success) {
+    throw new Error(gasResult.error || 'Unknown error from GAS');
+  }
+
+  return gasResult.fileId;
 }
 
 export function getProcessingStatus(reportId) {
@@ -49,6 +89,8 @@ export async function extractToExcelCache(report, document_id) {
     throw new Error('Report is already being processed');
   }
 
+  const startedAt = Date.now();
+
   processingLocks.set(reportId, true);
   updateStatus(reportId, 'PROCESSING');
 
@@ -57,6 +99,8 @@ export async function extractToExcelCache(report, document_id) {
       console.warn('[extractToExcelCache] Gagal update status PROCESSING:', e.message);
     }
   }
+
+  let failedTables = [];
 
   try {
     const excelPath = path.join(EXCEL_CACHE_DIR, `${reportId}.xlsx`);
@@ -72,9 +116,13 @@ export async function extractToExcelCache(report, document_id) {
         if (pageNum) pagePdfs[tableType] = await extractSinglePagePdf(reportId, pageNum);
       }
 
-      let tables = await extractAllTables(pagePdfs);
+      let tables = await extractAllTables(pagePdfs, { deadline: startedAt + EXTRACTION_BUDGET_MS });
       for (const key of Object.keys(tables)) {
         if (!tables[key] || !tables[key].rows || tables[key].rows.length === 0) delete tables[key];
+      }
+      failedTables = Object.keys(pagePdfs).filter(t => !tables[t]);
+      if (failedTables.length > 0) {
+        console.warn(`[extractToExcelCache:${reportId}] Tabel gagal diekstrak: ${failedTables.join(', ')}`);
       }
       if (Object.keys(tables).length === 0) throw new Error('Tidak ada tabel yang berhasil diekstrak.');
 
@@ -89,11 +137,26 @@ export async function extractToExcelCache(report, document_id) {
       const excelBuffer = writeExcelFromTemplate(tables, validation, metadata);
       if (!fs.existsSync(EXCEL_CACHE_DIR)) fs.mkdirSync(EXCEL_CACHE_DIR, { recursive: true });
       fs.writeFileSync(excelPath, excelBuffer);
+
+      // Upload the generated Excel to Google Drive
+      updateStatus(reportId, 'UPLOADING_EXCEL_TO_DRIVE');
+      try {
+        const excelFilename = `${metadata.nama || reportId}.xlsx`;
+        const excelDriveId = await uploadExcelToDriveUsingGAS(excelBuffer, excelFilename);
+        console.log(`[extractToExcelCache:${reportId}] Uploaded Excel to Drive: ${excelDriveId}`);
+        
+        if (document_id) {
+          await updateDocumentExcelId(document_id, excelDriveId);
+        }
+      } catch (uploadErr) {
+        console.error(`[extractToExcelCache:${reportId}] Failed to upload Excel to Drive:`, uploadErr.message);
+        // We continue even if upload fails, since it's cached locally
+      }
     } else {
       console.log(`[extractToExcelCache:${reportId}] Using cached Excel file.`);
     }
 
-    updateStatus(reportId, 'DRAFT_READY');
+    updateStatus(reportId, 'DRAFT_READY', { failedTables });
 
     if (document_id) {
       try { await updateDocumentStatus(document_id, 'DRAFT_READY'); } catch (e) {
@@ -101,7 +164,8 @@ export async function extractToExcelCache(report, document_id) {
       }
     }
 
-    return { success: true, status: 'DRAFT_READY', excelFile: `${reportId}.xlsx` };
+    console.log(`[extractToExcelCache:${reportId}] Selesai dalam ${Math.round((Date.now() - startedAt) / 1000)}s`);
+    return { success: true, status: 'DRAFT_READY', excelFile: `${reportId}.xlsx`, failedTables };
   } catch (err) {
     updateStatus(reportId, 'FAILED', { error: err.message });
     if (document_id) {
@@ -183,6 +247,21 @@ export async function processAndSendReport(report, document_id) {
         fs.mkdirSync(EXCEL_CACHE_DIR, { recursive: true });
       }
       fs.writeFileSync(excelPath, excelBuffer);
+
+      // Upload the generated Excel to Google Drive
+      updateStatus(reportId, 'UPLOADING_EXCEL_TO_DRIVE');
+      try {
+        const excelFilename = `${metadata.nama || reportId}.xlsx`;
+        const excelDriveId = await uploadExcelToDriveUsingGAS(excelBuffer, excelFilename);
+        console.log(`[Processing:${reportId}] Uploaded Excel to Drive: ${excelDriveId}`);
+        
+        if (document_id) {
+          await updateDocumentExcelId(document_id, excelDriveId);
+        }
+      } catch (uploadErr) {
+        console.error(`[Processing:${reportId}] Failed to upload Excel to Drive:`, uploadErr.message);
+        // We continue even if upload fails, since it's cached locally
+      }
     } else {
       console.log(`[Processing:${reportId}] Using cached Excel file.`);
     }

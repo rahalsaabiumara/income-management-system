@@ -32,7 +32,7 @@ import { writeExcel, writeExcelFromTemplate } from './services/excelWriter.js';
 import { parseLMName, sortKey } from './utils/dateParser.js';
 import { ZipArchive } from 'archiver';
 import { processAndSendReport, getProcessingStatus, extractToExcelCache } from './services/processingService.js';
-import { updateDocumentStatus, createDocument } from './services/documentTrackingService.js';
+import { updateDocumentStatus, createDocument, getDocumentByFileId } from './services/documentTrackingService.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -802,9 +802,20 @@ app.post('/api/upload-process-pdf', uploadPdf.single('file'), async (req, res) =
     }
     
     // 4. Extraction-only: PDF → Excel Cache (NO Tabular/Supabase sync)
-    extractToExcelCache(report, documentId).catch(err => {
+    const extractionTask = extractToExcelCache(report, documentId).catch(err => {
       console.error(`[ExtractToExcelCache Error ${fileId}]`, err);
     });
+    // Di Vercel (serverless), pekerjaan setelah response dikirim akan dibekukan/dihentikan
+    // kecuali didaftarkan lewat waitUntil. Secara lokal cukup fire-and-forget.
+    if (process.env.VERCEL) {
+      try {
+        const { waitUntil } = await import('@vercel/functions');
+        waitUntil(extractionTask);
+      } catch (wuErr) {
+        console.warn('[Upload] waitUntil tidak tersedia, menunggu ekstraksi selesai sebelum response:', wuErr.message);
+        await extractionTask;
+      }
+    }
     
     return res.json({ 
       success: true, 
@@ -820,9 +831,40 @@ app.post('/api/upload-process-pdf', uploadPdf.single('file'), async (req, res) =
 /**
  * GET /api/process-report/:fileId/status — Get current pipeline status
  */
-app.get('/api/process-report/:fileId/status', (req, res) => {
+app.get('/api/process-report/:fileId/status', async (req, res) => {
   const status = getProcessingStatus(req.params.fileId);
-  return res.json(status);
+  if (status.status !== 'IDLE') {
+    return res.json(status);
+  }
+
+  // Fallback: di serverless, request polling bisa jatuh ke instance lain yang tidak
+  // punya status in-memory. Baca status persisten dari tabel documents.
+  try {
+    const doc = await getDocumentByFileId(req.params.fileId);
+    if (!doc) return res.json(status);
+
+    const POST_DRAFT = ['DRAFT_READY', 'IN_REVIEW', 'REVISION_REQUESTED', 'APPROVED', 'POSTED'];
+    if (POST_DRAFT.includes(doc.status)) {
+      return res.json({ status: 'DRAFT_READY', source: 'db' });
+    }
+    if (doc.status === 'PROCESSING') {
+      return res.json({ status: 'CONVERTING', source: 'db' });
+    }
+    // UNPROCESSED: baru dibuat (belum mulai) atau dikembalikan setelah ekstraksi gagal
+    const created = doc.created_at ? new Date(doc.created_at).getTime() : 0;
+    const updated = doc.updated_at ? new Date(doc.updated_at).getTime() : created;
+    if (updated - created > 2000) {
+      return res.json({
+        status: 'FAILED',
+        source: 'db',
+        error: 'Ekstraksi PDF gagal. Periksa log server untuk detail, lalu coba unggah ulang.',
+      });
+    }
+    return res.json({ status: 'PROCESSING', source: 'db' });
+  } catch (dbErr) {
+    console.warn('[process-report/status] Fallback DB gagal:', dbErr.message);
+    return res.json(status);
+  }
 });
 
 // ── Convert to Excel ────────────────────────────────────────────

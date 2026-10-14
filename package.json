@@ -20,6 +20,7 @@
     "@tsparticles/engine": "^3.9.1",
     "@tsparticles/react": "^3.0.0",
     "@tsparticles/slim": "^3.9.1",
+    "@vercel/functions": "^3.9.11",
     "archiver": "^8.0.0",
     "axios": "^1.19.0",
     "cors": "^2.8.6",

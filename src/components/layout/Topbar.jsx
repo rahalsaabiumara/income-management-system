@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useLocation, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext.jsx';
-import { supabase } from '../../supabase.js';
 import { MobileMenuButton } from './Sidebar.jsx';
 import { resolveDashboardSection } from '../../lib/bi/constants.js';
+import { useReviewNotifications } from '../../hooks/useReviewNotifications.js';
 
 const MODE_OPTIONS = [
   { key: 'annual', label: 'Annual' },
@@ -28,31 +28,25 @@ const MONTH_SHORT = [
 ];
 
 function AdminNotificationBell() {
-  const [notifications, setNotifications] = useState([]);
+  const { items, count, loading, error, refetch } = useReviewNotifications();
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef(null);
+  const [prevCount, setPrevCount] = useState(count);
+  const [announcement, setAnnouncement] = useState('');
+
+  // Announce for screen readers when count changes
+  useEffect(() => {
+    if (count !== prevCount) {
+      setAnnouncement(`Ada ${count} revisi menunggu`);
+      setPrevCount(count);
+    }
+  }, [count, prevCount]);
 
   useEffect(() => {
-    const fetchNotifications = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) return;
-        const res = await fetch('/api/documents', {
-          headers: { Authorization: `Bearer ${session.access_token}` }
-        });
-        if (res.ok) {
-          const docs = await res.json();
-          const revisions = docs.filter(d => d.status === 'REVISION_REQUESTED');
-          setNotifications(revisions);
-        }
-      } catch (err) {
-        console.error('Failed to fetch notifications:', err);
-      }
-    };
-    fetchNotifications();
-    const interval = setInterval(fetchNotifications, 30000); // 30s
-    return () => clearInterval(interval);
-  }, []);
+    if (isOpen) {
+      refetch();
+    }
+  }, [isOpen, refetch]);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -60,50 +54,154 @@ function AdminNotificationBell() {
         setIsOpen(false);
       }
     };
+    const handleEscape = (e) => {
+      if (e.key === 'Escape') setIsOpen(false);
+    };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
   }, []);
+
+  const formatRelativeTime = (dateStr) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHrs = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHrs / 24);
+
+    if (diffMins < 1) return 'Baru saja';
+    if (diffMins < 60) return `${diffMins} menit lalu`;
+    if (diffHrs < 24) return `${diffHrs} jam lalu`;
+    if (diffDays < 7) return `${diffDays} hari lalu`;
+    return date.toLocaleDateString('id-ID');
+  };
 
   return (
     <div className="relative" ref={dropdownRef}>
+      <div aria-live="polite" className="sr-only">{announcement}</div>
       <button 
         onClick={() => setIsOpen(!isOpen)}
-        className="relative p-1.5 text-gray-500 hover:text-gray-700 transition-colors rounded-full hover:bg-gray-100"
+        className="relative p-1.5 text-gray-500 hover:text-gray-700 transition-colors rounded-full hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-500"
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        aria-label={`Notifikasi, ${count} revisi menunggu`}
       >
         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
         </svg>
-        {notifications.length > 0 && (
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full ring-2 ring-gray-50 animate-pulse"></span>
+        {count > 0 && (
+          <span className="absolute top-1 right-1 flex items-center justify-center w-3.5 h-3.5 bg-red-500 text-white text-[9px] font-bold rounded-full ring-2 ring-gray-50">
+            {count > 9 ? '9+' : count}
+          </span>
         )}
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-lg ring-1 ring-gray-200 z-50 overflow-hidden flex flex-col">
-          <div className="px-4 py-3 border-b bg-gray-50/50 flex justify-between items-center">
+        <div 
+          className="absolute right-0 mt-2 w-[360px] sm:w-[380px] max-w-[calc(100vw-24px)] bg-white rounded-xl shadow-xl ring-1 ring-gray-200 z-[100] flex flex-col"
+          role="menu"
+        >
+          <div className="px-4 py-3 border-b bg-gray-50/50 flex justify-between items-center rounded-t-xl shrink-0">
             <span className="text-sm font-bold text-gray-800">Notifikasi</span>
-            <span className="text-[10px] font-semibold bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">{notifications.length}</span>
-          </div>
-          <div className="max-h-80 overflow-y-auto">
-            {notifications.length === 0 ? (
-              <div className="px-4 py-6 text-center text-sm text-gray-500">Tidak ada notifikasi baru</div>
-            ) : (
-              notifications.map(doc => (
-                <Link
-                  key={doc.id}
-                  to="/reviewhub"
-                  onClick={() => setIsOpen(false)}
-                  className="px-4 py-3 border-b border-gray-100 hover:bg-blue-50/50 flex flex-col gap-1 transition-colors block"
-                >
-                  <span className="text-xs font-semibold text-gray-800 line-clamp-1">{doc.original_name}</span>
-                  <span className="text-[10px] text-red-600 font-medium flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
-                    Menunggu Revisi Excel
-                  </span>
-                </Link>
-              ))
+            {count > 0 && (
+              <span className="text-[10px] font-semibold bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">{count}</span>
             )}
           </div>
+          
+          <div className="overflow-y-auto max-h-[420px] flex flex-col">
+            {loading && count === 0 ? (
+              <div className="p-4 space-y-3">
+                <div className="h-10 bg-gray-100 rounded-lg animate-pulse w-full"></div>
+                <div className="h-10 bg-gray-100 rounded-lg animate-pulse w-full"></div>
+              </div>
+            ) : error ? (
+              <div className="px-4 py-6 text-center">
+                <p className="text-sm text-red-500 font-medium mb-2">{error}</p>
+                <button onClick={refetch} className="text-xs text-brand-600 hover:underline">Coba lagi</button>
+              </div>
+            ) : count === 0 ? (
+              <div className="px-4 py-8 flex flex-col items-center justify-center text-gray-400">
+                <svg className="w-10 h-10 mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <p className="text-sm font-medium">Tidak ada revisi yang menunggu</p>
+              </div>
+            ) : (
+              items.slice(0, 5).map(item => {
+                let linkTarget = `/keuangan?file=${item.fileId}`;
+                if (item.sheets?.length > 0) linkTarget += `&sheet=${encodeURIComponent(item.sheets[0])}`;
+                if (item.firstCommentId) linkTarget += `&comment=${item.firstCommentId}`;
+
+                return (
+                  <Link
+                    key={item.fileId}
+                    to={linkTarget}
+                    onClick={() => setIsOpen(false)}
+                    className="group relative px-4 py-3 border-b border-gray-100 hover:bg-gray-50 flex items-start gap-3 transition-colors block outline-none focus:bg-gray-50"
+                    role="menuitem"
+                  >
+                    <div className="flex-1 min-w-0 flex flex-col gap-1">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200">
+                          Revisi diperlukan
+                        </span>
+                      </div>
+                      
+                      <div className="font-semibold text-sm text-gray-900 truncate" title={item.fileName}>
+                        {item.fileName}
+                      </div>
+
+                      {(item.commentCount > 0 || item.sheets?.length > 0) && (
+                        <div className="text-[10px] text-gray-500 font-medium flex items-center gap-1.5 truncate">
+                          {item.commentCount > 0 && <span>{item.commentCount} komentar terbuka</span>}
+                          {item.commentCount > 0 && item.sheets?.length > 0 && <span>·</span>}
+                          {item.sheets?.length > 0 && <span className="truncate">{item.sheets.join(', ')}</span>}
+                        </div>
+                      )}
+
+                      <div className="text-[10px] text-gray-400 flex items-center gap-1.5 mt-0.5">
+                        <span className="font-semibold">{item.lastCommentBy}</span>
+                        <span>·</span>
+                        <span title={new Date(item.lastCommentAt).toLocaleString('id-ID')}>
+                          {formatRelativeTime(item.lastCommentAt)}
+                        </span>
+                      </div>
+
+                      {item.snippet && (
+                        <div className="text-[11px] text-gray-600 mt-1 truncate italic">
+                          "{item.snippet}"
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="pt-2 text-gray-300 group-hover:text-brand-500 transition-colors">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </div>
+                  </Link>
+                );
+              })
+            )}
+          </div>
+          
+          {count > 5 && (
+            <div className="p-2 bg-gray-50 rounded-b-xl border-t shrink-0">
+              <Link 
+                to="/keuangan?status=REVISION_REQUESTED" 
+                onClick={() => setIsOpen(false)}
+                className="block text-center text-xs font-bold text-brand-600 hover:text-brand-700 py-2 rounded-lg hover:bg-brand-50 transition-colors"
+                role="menuitem"
+              >
+                Lihat semua ({count})
+              </Link>
+            </div>
+          )}
         </div>
       )}
     </div>

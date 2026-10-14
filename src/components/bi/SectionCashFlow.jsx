@@ -11,6 +11,7 @@ import { buildMonthlyData } from '../../lib/bi/aggregation.js';
 import { buildBreakdownBarData, buildBreakdownBarDataMonthly, formatYTDNote, buildYTDNoteFor } from '../../lib/bi/breakdown.js';
 import { buildTypeKpis } from '../../lib/bi/typeKpi.js';
 import { KPI_TYPE_ORDER } from '../../lib/bi/constants.js';
+import { buildLMRows } from '../../lib/bi/lmRows.js';
 
 /**
  * Hierarchy config for Cash Flow table.
@@ -92,7 +93,7 @@ function getLabelForKey(key) {
   return opt?.label || key;
 }
 
-export default function SectionCashFlow({ data, allRecords, rkapRecords, years, selectedYear, onYearChange, searchTerm, mode = 'annual', onModeChange, ytdMonth = 8, onYtdMonthChange, chartRowRef, chartsCollapsed, onToggleCharts, chartSticky, isShortViewport }) {
+export default function SectionCashFlow({ data, allRecords, rkapRecords, years, selectedYear, onYearChange, searchTerm, mode = 'annual', onModeChange, ytdMonth = 8, onYtdMonthChange, tableView = 'analitik', onTableViewChange, chartRowRef, chartsCollapsed, onToggleCharts, chartSticky, isShortViewport }) {
   if (!data) return null;
   const { kpis } = data;
 
@@ -142,6 +143,13 @@ export default function SectionCashFlow({ data, allRecords, rkapRecords, years, 
     if (!allRecords || !isMonthly) return null;
     return buildHierarchicalTableRowsMonthly(allRecords, monthlyYear, CF_HIERARCHY, rkapRecords, rkapYear);
   }, [allRecords, monthlyYear, rkapRecords, rkapYear, isMonthly]);
+
+  // Laporan Manajemen rows (template order) — same builders/aggregation, active mode only
+  const isLM = tableView === 'lm';
+  const lmRows = useMemo(() => {
+    if (!allRecords || !isLM) return null;
+    return buildLMRows({ sectionKey: 'CF', mode, records: allRecords, rkapRecords, years, rkapYear, ytdMonth, monthlyYear });
+  }, [allRecords, isLM, mode, rkapRecords, years, rkapYear, ytdMonth, monthlyYear]);
 
   // Shared table selection (default package = 'Arus Kas')
   const annualSel = useRowSelection(tableRows, { defaultParentId: DEFAULT_PARENT });
@@ -253,8 +261,9 @@ export default function SectionCashFlow({ data, allRecords, rkapRecords, years, 
     return buildTypeKpis({
       records: allRecords, rkapRecords, hierarchy: CF_HIERARCHY, year: selectedYear,
       variant: 'flow', typeOrder: KPI_TYPE_ORDER.cashFlow, profile: 'cashFlow',
+      ytdMonth: isYTD ? ytdMonth : 12,
     });
-  }, [allRecords, rkapRecords, selectedYear]);
+  }, [allRecords, rkapRecords, selectedYear, isYTD, ytdMonth]);
 
   return (
     <div className="bi-section-stack">
@@ -310,6 +319,9 @@ export default function SectionCashFlow({ data, allRecords, rkapRecords, years, 
         maxSelections={Infinity}
         canReset={canReset}
         onReset={handleReset}
+        view={tableView}
+        onViewChange={onTableViewChange}
+        lmRows={lmRows}
       />
     </div>
   );

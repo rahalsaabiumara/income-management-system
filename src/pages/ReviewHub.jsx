@@ -1,6 +1,9 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import { supabase } from '../supabase.js';
+import PdfUploadProgressModal from '../components/PdfUploadProgressModal.jsx';
 
 const STATUS_STEPS = [
   { id: 'REVIEW', labels: ['DRAFT_READY', 'UNPROCESSED', 'PROCESSING'] },
@@ -17,6 +20,12 @@ const COMMENT_TYPES = [
 ];
 
 export default function ReviewHub() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const fileParam = searchParams.get('file');
+  const sheetParam = searchParams.get('sheet');
+  const commentParam = searchParams.get('comment');
+  const statusParam = searchParams.get('status');
+
   const { user, role } = useAuth();
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -33,7 +42,13 @@ export default function ReviewHub() {
   const [queueOpen, setQueueOpen] = useState(true);
   const [commentsOpen, setCommentsOpen] = useState(true);
   const [editMode, setEditMode] = useState(false); // Admin only
-  const [filterStatus, setFilterStatus] = useState('Semua');
+  const [filterStatus, setFilterStatus] = useState(() => {
+    if (statusParam === 'REVISION_REQUESTED') return 'Revisi';
+    return 'Semua';
+  });
+
+  // Highlight comment reference
+  const highlightedCommentRef = useRef(null);
 
   // Comments state
   const [comments, setComments] = useState([]);
@@ -42,7 +57,18 @@ export default function ReviewHub() {
   const [newComment, setNewComment] = useState('');
   const [commenting, setCommenting] = useState(false);
 
+  // Row reference states (Target Cell ↔ grid row)
+  const [blinkTarget, setBlinkTarget] = useState(null); // { sheet, idx, nonce } — one-time "go to cell" blink
+  const [goToNotice, setGoToNotice] = useState(null);   // { commentId, msg } — shown when a target row can't be found
+  const autoTargetRef = useRef(null);                    // { sheet, ref } of the last row-click auto-fill
+  const blinkTimerRef = useRef(null);
+
   const [processingAction, setProcessingAction] = useState(null); // 'approve' | 'send'
+
+  // PDF Upload State (Admin only) — moved from Dashboard
+  const queryClient = useQueryClient();
+  const [uploadingPdfFile, setUploadingPdfFile] = useState(null);
+  const [pdfUploadError, setPdfUploadError] = useState(null);
 
   const isAdmin = role === 'ADMIN';
   const isKeuangan = role === 'KEUANGAN';
@@ -54,7 +80,7 @@ export default function ReviewHub() {
     for (const sheet of Object.keys(editedSheets)) {
       const orig = excelData.sheets[sheet] || [];
       const edit = editedSheets[sheet] || [];
-      
+
       // Check rows added/removed
       if (edit.length !== orig.length) {
         diffs.push({ sheet, type: 'row_count', orig: orig.length, edit: edit.length });
@@ -65,7 +91,7 @@ export default function ReviewHub() {
         const editRow = edit[r] || [];
         const origRow = orig[r] || [];
         // if row is completely new (added), don't flag every cell, just the row
-        if (!orig[r]) continue; 
+        if (!orig[r]) continue;
 
         for (let c = 0; c < editRow.length; c++) {
           if (editRow[c] !== origRow[c] && !(editRow[c] == null && origRow[c] == null)) {
@@ -97,12 +123,13 @@ export default function ReviewHub() {
       const res = await fetch('/api/documents', { headers });
       if (!res.ok) throw new Error('Failed to fetch documents');
       const data = await res.json();
-      
+
       // Filter out only cached ones
       const withCache = data.filter(d => d.has_excel_cache);
       setDocuments(withCache);
 
-      // Update selected doc if it was updated
+      // We will let the URL effect handle selection instead of manually doing it here,
+      // but we update the object reference if it was updated
       if (selectedDoc) {
         const updated = withCache.find(d => d.id === selectedDoc.id);
         if (updated) setSelectedDoc(updated);
@@ -116,19 +143,139 @@ export default function ReviewHub() {
 
   useEffect(() => { fetchDocuments(); }, []);
 
-  const handleSelectDoc = async (doc) => {
+  // Sync URL to Queue Status Filter
+  useEffect(() => {
+    if (statusParam === 'REVISION_REQUESTED') {
+      setFilterStatus('Revisi');
+    }
+  }, [statusParam]);
+
+  // Sync URL to selected file
+  useEffect(() => {
+    if (loading) return; // wait until docs are loaded
+    if (!fileParam) {
+      setSelectedDoc(null);
+      setExcelData(null);
+      setEditedSheets({});
+      setComments([]);
+      return;
+    }
+    if (selectedDoc?.id === fileParam) return;
+
+    // Check if the file is in the currently displayed filtered docs
+    let doc = documents.find(d => d.id === fileParam);
+
+    if (doc) {
+      // If it exists in all documents but maybe hidden by filterStatus, we reset filter
+      const isVisibleInCurrentFilter = (() => {
+        if (filterStatus === 'Semua') return true;
+        const oCount = comments.filter(c => c.document_id === doc.id && c.status === 'OPEN').length;
+        if (filterStatus === 'Revisi' && (doc.status === 'REVISION_REQUESTED' || oCount > 0)) return true;
+        if (filterStatus === 'Review' && ['UNPROCESSED', 'PROCESSING', 'DRAFT_READY'].includes(doc.status) && oCount === 0) return true;
+        if (filterStatus === 'Approval Admin' && doc.status === 'IN_REVIEW') return true;
+        if (filterStatus === 'Terkirim' && ['APPROVED', 'POSTED'].includes(doc.status)) return true;
+        return false;
+      })();
+
+      if (!isVisibleInCurrentFilter) {
+        setFilterStatus('Semua');
+      }
+
+      // Automatically scroll it into view later
+      setTimeout(() => {
+        const el = document.getElementById(`queue-item-${doc.id}`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 100);
+
+      loadDocData(doc);
+    } else {
+      // Document not found in local state, could be deleted or user doesn't have access
+      alert('File tidak ditemukan atau sudah selesai direview');
+      setSearchParams(prev => {
+        prev.delete('file');
+        prev.delete('sheet');
+        prev.delete('comment');
+        return prev;
+      }, { replace: true });
+    }
+  }, [fileParam, loading, documents]);
+
+  // Sync URL to Active Tab and Highlight Comment
+  useEffect(() => {
+    if (!selectedDoc || excelLoading) return;
+    if (sheetParam && sheetParam !== activeTab && excelData?.sheetNames?.includes(sheetParam)) {
+      setActiveTab(sheetParam);
+    }
+    
+    if (commentParam && !excelLoading) {
+      setTimeout(() => {
+        const commentEl = document.getElementById(`comment-${commentParam}`);
+        if (commentEl) {
+          commentEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          commentEl.classList.add('ring-2', 'ring-amber-500', 'bg-amber-50');
+          setTimeout(() => {
+            commentEl.classList.remove('ring-2', 'ring-amber-500', 'bg-amber-50');
+          }, 2500);
+        }
+      }, 300);
+    }
+  }, [sheetParam, commentParam, excelLoading, selectedDoc]);
+
+
+  // Keep latest fetchDocuments in a ref so the PDF modal's onSuccess stays stable
+  const fetchDocumentsRef = useRef(fetchDocuments);
+  useEffect(() => { fetchDocumentsRef.current = fetchDocuments; }, [fetchDocuments]);
+
+  // ── Upload PDF ──
+  const handlePdfUpload = (e) => {
+    const file = e.target.files?.[0];
+
+    // Reset file input so the same file can be selected again and to prevent duplicate triggers
+    e.target.value = null;
+
+    if (!file || !isAdmin) return;
+
+    if (file.type !== 'application/pdf') {
+      setPdfUploadError('Hanya file PDF yang diperbolehkan.');
+      return;
+    }
+
+    setPdfUploadError(null);
+    setUploadingPdfFile(file);
+  };
+
+  const handleClosePdfModal = useCallback(() => setUploadingPdfFile(null), []);
+
+  const handlePdfUploadSuccess = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['master'] });
+    fetchDocumentsRef.current?.();
+  }, [queryClient]);
+
+  const handleSelectDocClick = (doc) => {
     if (hasUnsavedChanges && !window.confirm('Ada perubahan belum disimpan. Lanjutkan tanpa menyimpan?')) return;
+    setSearchParams(prev => {
+      prev.set('file', doc.id);
+      prev.delete('sheet');
+      prev.delete('comment');
+      return prev;
+    }, { replace: true });
+  };
+
+  const loadDocData = async (doc) => {
     setSelectedDoc(doc);
     setExcelData(null);
     setEditedSheets({});
     setComments([]);
     setExcelLoading(true);
     setEditMode(false);
-    setActiveTab('LR');
+    setBlinkTarget(null);
+    setGoToNotice(null);
+    autoTargetRef.current = null;
+    if (!sheetParam) setActiveTab('LR');
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      
+
       const excelRes = await fetch(`/api/documents/${doc.id}/excel-data`, {
         headers: { Authorization: `Bearer ${session.access_token}` }
       });
@@ -138,7 +285,9 @@ export default function ReviewHub() {
       setEditedSheets(JSON.parse(JSON.stringify(eData.sheets)));
 
       if (eData.sheetNames && eData.sheetNames.length > 0) {
-        setActiveTab(eData.sheetNames.includes('LR') ? 'LR' : eData.sheetNames[0]);
+        if (!sheetParam || !eData.sheetNames.includes(sheetParam)) {
+          setActiveTab(eData.sheetNames.includes('LR') ? 'LR' : eData.sheetNames[0]);
+        }
       }
 
       await fetchComments(doc.id);
@@ -183,7 +332,7 @@ export default function ReviewHub() {
       const copy = { ...prev };
       const colCount = (copy[sheetName]?.[0] || []).length || 5;
       const newRow = Array(colCount).fill(null);
-      
+
       // find index of URAIAN column (usually 1 or 0, let's assume 1 based on template if # is 0, wait template has URAIAN)
       // Actually we just set it at index 0 because our grid renders index 0 as first data column
       newRow[0] = defaultUraian;
@@ -200,7 +349,7 @@ export default function ReviewHub() {
   };
 
   const handleDeleteRow = (sheetName, rowIdx) => {
-    if (!isAdmin || rowIdx === 0) return; 
+    if (!isAdmin || rowIdx === 0) return;
     if (!window.confirm(`Hapus baris ${rowIdx + 1}?`)) return;
     setEditedSheets(prev => {
       const copy = { ...prev };
@@ -267,7 +416,7 @@ export default function ReviewHub() {
 
       if (res.status === 409) {
         alert('File telah diubah oleh pengguna lain. Halaman akan di-reload.');
-        handleSelectDoc(selectedDoc);
+        loadDocData(selectedDoc);
         return;
       }
       if (!res.ok) {
@@ -303,9 +452,10 @@ export default function ReviewHub() {
         body: JSON.stringify(payload)
       });
       if (!res.ok) throw new Error('Failed to add comment');
-      
+
       setNewComment('');
       setNewCommentTarget('');
+      autoTargetRef.current = null;
       await fetchComments(selectedDoc.id);
       fetchDocuments(); // Refresh status (moves to REVISI)
     } catch (err) {
@@ -343,7 +493,7 @@ export default function ReviewHub() {
       return;
     }
     if (!window.confirm('Approve dokumen ini?')) return;
-    
+
     setProcessingAction('approve');
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -367,7 +517,7 @@ export default function ReviewHub() {
   const handleSend = async () => {
     if (!isKeuangan) return;
     if (!window.confirm('Kirim ke Database sekarang? Data akan di-sync ke Sheets & Supabase.')) return;
-    
+
     setProcessingAction('send');
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -417,6 +567,170 @@ export default function ReviewHub() {
   // ── UI Helpers ──
   const sheetTabs = excelData?.sheetNames || ['LR', 'ARUS KAS', 'NERACA', 'PDPT'];
 
+  // ── Row reference helpers (Target Cell ↔ grid row) ──
+  const FIRST_BODY_ROW = 2; // sheet rows 0-1 are rendered as the table header
+
+  const colIndexToLetter = (n) => {
+    let s = '';
+    let x = n + 1;
+    while (x > 0) {
+      const m = (x - 1) % 26;
+      s = String.fromCharCode(65 + m) + s;
+      x = Math.floor((x - 1) / 26);
+    }
+    return s;
+  };
+
+  // Top-left of the sheet's used range (0-based), sent by the server. Defaults to A1.
+  const getSheetOrigin = (sheet) => excelData?.sheetOrigins?.[sheet] || { r: 0, c: 0 };
+
+  const normText = (s) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+  // Array row index → "A9, Jumlah Beban Usaha" (Uraian / column A represents the row)
+  const buildRowRef = (sheet, idx) => {
+    const origin = getSheetOrigin(sheet);
+    const cell = `${colIndexToLetter(origin.c)}${origin.r + idx + 1}`;
+    const uraian = String(editedSheets[sheet]?.[idx]?.[0] ?? '').trim();
+    return uraian ? `${cell}, ${uraian}` : cell;
+  };
+
+  // "A9, Jumlah Beban Usaha" | "A9" | "Jumlah Beban Usaha" → array row index (or -1)
+  const resolveRowFromTarget = (sheet, target) => {
+    const data = editedSheets[sheet];
+    const raw = String(target ?? '').trim();
+    if (!data || !raw) return -1;
+
+    const inBody = (i) => i >= FIRST_BODY_ROW && i < data.length;
+    const findByText = (text) => {
+      const q = normText(text);
+      if (!q) return -1;
+      let i = data.findIndex((row, ri) => inBody(ri) && normText(row?.[0]) === q);
+      if (i === -1 && q.length >= 4) i = data.findIndex((row, ri) => inBody(ri) && normText(row?.[0]).startsWith(q));
+      if (i === -1 && q.length >= 6) i = data.findIndex((row, ri) => inBody(ri) && normText(row?.[0]).includes(q));
+      return i;
+    };
+
+    const m = raw.match(/^\$?([A-Za-z]{1,3})\$?(\d+)(?!\d)/);
+    if (m) {
+      const label = raw.slice(m[0].length).replace(/^[\s,;:\-–—]+/, '').trim();
+      const idx = parseInt(m[2], 10) - 1 - getSheetOrigin(sheet).r;
+      if (inBody(idx)) {
+        // Rows may have shifted (Admin added/deleted rows) since the comment was
+        // written: prefer the row whose Uraian still matches the label.
+        if (label && normText(data[idx]?.[0]) !== normText(label)) {
+          const byText = findByText(label);
+          if (byText !== -1) return byText;
+        }
+        return idx;
+      }
+      return label ? findByText(label) : -1;
+    }
+    return findByText(raw);
+  };
+
+  // Keuangan: the highlighted row is derived from the Target field, so both a row
+  // click and a manually typed reference (e.g. "A9") highlight the same row.
+  const keuanganSelectedIdx = isKeuangan ? resolveRowFromTarget(activeTab, newCommentTarget) : -1;
+
+  // Rows on the active sheet referenced by open comments (visible to both roles)
+  const commentRowSet = new Set(
+    openComments
+      .filter(c => c.sheet_name === activeTab && c.target_cell)
+      .map(c => resolveRowFromTarget(activeTab, c.target_cell))
+      .filter(i => i >= 0)
+  );
+
+  const handleRowClick = (idx) => {
+    if (!isKeuangan) return;
+    // Ignore clicks that end a text-selection drag
+    if (window.getSelection?.()?.toString()) return;
+    if (idx === keuanganSelectedIdx) {
+      autoTargetRef.current = null;
+      setNewCommentTarget('');
+      return;
+    }
+    const ref = buildRowRef(activeTab, idx);
+    autoTargetRef.current = { sheet: activeTab, ref };
+    setNewCommentTarget(ref);
+    if (!commentsOpen) setCommentsOpen(true);
+  };
+
+  const triggerBlink = (sheet, idx) => {
+    clearTimeout(blinkTimerRef.current);
+    setBlinkTarget(null);
+    // Set again on the next tick so the CSS animation restarts even for the same row
+    blinkTimerRef.current = setTimeout(() => setBlinkTarget({ sheet, idx, nonce: Date.now() }), 40);
+  };
+
+  // Admin "Ke Sel / Sheet": switch sheet → edit grid → scroll to row → blink once
+  const handleGoToCell = (c) => {
+    const sheet = c.sheet_name && sheetTabs.includes(c.sheet_name) ? c.sheet_name : activeTab;
+    setActiveTab(sheet);
+    setEditMode(true);
+    const idx = resolveRowFromTarget(sheet, c.target_cell);
+    if (idx >= 0) {
+      setGoToNotice(null);
+      triggerBlink(sheet, idx);
+    } else {
+      setGoToNotice({
+        commentId: c.id,
+        msg: c.target_cell
+          ? `Baris "${c.target_cell}" tidak ditemukan di sheet ${sheet}.`
+          : 'Komentar ini tidak memiliki target baris.'
+      });
+    }
+  };
+
+  // Scroll the grid (only the grid container, not the page) so the target row is centered
+  useEffect(() => {
+    if (!blinkTarget || blinkTarget.sheet !== activeTab || excelLoading) return;
+    const raf = requestAnimationFrame(() => {
+      const rowEl = document.getElementById(`rh-row-${blinkTarget.idx}`);
+      const box = rowEl?.closest('[data-rh-scroll]');
+      if (!rowEl || !box) return;
+      const boxRect = box.getBoundingClientRect();
+      const rowRect = rowEl.getBoundingClientRect();
+      const top = box.scrollTop + (rowRect.top - boxRect.top) - (box.clientHeight - rowRect.height) / 2;
+      box.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    });
+    const t = setTimeout(() => setBlinkTarget(null), 1500);
+    return () => { cancelAnimationFrame(raf); clearTimeout(t); };
+  }, [blinkTarget, activeTab, editMode, excelLoading]);
+
+  useEffect(() => () => clearTimeout(blinkTimerRef.current), []);
+
+  useEffect(() => {
+    if (!goToNotice) return;
+    const t = setTimeout(() => setGoToNotice(null), 3500);
+    return () => clearTimeout(t);
+  }, [goToNotice]);
+
+  // Switching sheet drops an auto-filled reference from the previous sheet
+  // (the comment is saved against the active sheet). Manual input is kept.
+  useEffect(() => {
+    const auto = autoTargetRef.current;
+    if (auto && auto.sheet !== activeTab) {
+      autoTargetRef.current = null;
+      setNewCommentTarget(t => (t === auto.ref ? '' : t));
+    }
+  }, [activeTab]);
+
+  // Deep link (?comment=, e.g. from the notification bell): also jump to the row
+  // that comment points at — once per file+comment, view mode (no edit switch).
+  const handledDeepLinkRef = useRef(null);
+  useEffect(() => {
+    if (!commentParam || !selectedDoc || excelLoading || comments.length === 0) return;
+    const key = `${selectedDoc.id}:${commentParam}`;
+    if (handledDeepLinkRef.current === key) return;
+    const target = comments.find(c => String(c.id) === String(commentParam));
+    if (!target) return;
+    handledDeepLinkRef.current = key;
+    if (target.target_cell && target.sheet_name) {
+      const idx = resolveRowFromTarget(target.sheet_name, target.target_cell);
+      if (idx >= 0) triggerBlink(target.sheet_name, idx);
+    }
+  }, [commentParam, selectedDoc, excelLoading, comments]);
+
   const getSheetCommentCount = (sheetName) => {
     return openComments.filter(c => c.sheet_name === sheetName).length;
   };
@@ -434,7 +748,7 @@ export default function ReviewHub() {
 
   const renderFormalGrid = (sheetData, isViewMode) => {
     if (!sheetData || sheetData.length === 0) return null;
-    
+
     let grandTotalIdx = -1;
     for (let i = sheetData.length - 1; i >= 1; i--) {
       if (sheetData[i].slice(1).some(v => typeof v === 'number')) {
@@ -444,7 +758,7 @@ export default function ReviewHub() {
     }
 
     return (
-      <div className="overflow-auto bg-white h-full">
+      <div className="overflow-auto bg-white h-full" data-rh-scroll>
         <table className="w-full text-sm text-left border-collapse font-sans text-gray-900">
           <thead className="sticky top-0 z-20 bg-white shadow-sm ring-1 ring-gray-200">
             <tr>
@@ -477,11 +791,28 @@ export default function ReviewHub() {
               const isSectionHeader = !hasNumbers && uraian !== '';
               const isDetail = hasNumbers && !isSubtotal;
               const rowNew = isRowNew(activeTab, actualIdx);
+              const isSelectedRow = actualIdx === keuanganSelectedIdx;
+              const isCommentedRow = commentRowSet.has(actualIdx);
+              const isBlinkRow = blinkTarget?.sheet === activeTab && blinkTarget?.idx === actualIdx;
+              const trClass = [
+                'transition-colors group',
+                isSelectedRow ? 'bg-green-100 rh-row-selected'
+                  : isCommentedRow ? 'bg-green-50 hover:bg-green-100/60 rh-row-commented'
+                    : 'hover:bg-gray-50',
+                isKeuangan ? 'cursor-pointer' : '',
+                isBlinkRow ? 'rh-row-blink' : ''
+              ].filter(Boolean).join(' ');
 
               return (
                 <React.Fragment key={actualIdx}>
                   {isSectionHeader && rIdx > 0 && <tr><td colSpan={row.length} className="h-6"></td></tr>}
-                  <tr className="hover:bg-gray-50 transition-colors group">
+                  <tr
+                    id={`rh-row-${actualIdx}`}
+                    className={trClass}
+                    onClick={isKeuangan ? () => handleRowClick(actualIdx) : undefined}
+                    aria-selected={isKeuangan ? isSelectedRow : undefined}
+                    title={isKeuangan ? (isSelectedRow ? 'Klik lagi untuk batal memilih' : 'Klik untuk jadikan referensi komentar') : (isCommentedRow ? 'Ada komentar terbuka pada baris ini' : undefined)}
+                  >
                     <td className={`px-2 py-1.5 relative ${isSectionHeader || isSubtotal ? 'font-bold' : ''} ${isDetail ? 'pl-6 text-gray-800' : ''}`}>
                       {rowNew && <span className="absolute -left-2 top-2 w-1.5 h-1.5 bg-green-500 rounded-full" title="Baris Baru" />}
                       {uraian}
@@ -492,7 +823,7 @@ export default function ReviewHub() {
                       if (typeof cellVal === 'number') {
                         displayVal = cellVal < 0 ? `(${Math.abs(cellVal).toLocaleString('id-ID')})` : (cellVal === 0 ? '0' : cellVal.toLocaleString('id-ID'));
                       }
-                      
+
                       const cellClasses = [
                         'px-2 py-1.5 text-right whitespace-nowrap relative',
                         isSubtotal || isSectionHeader ? 'font-bold' : '',
@@ -520,7 +851,7 @@ export default function ReviewHub() {
 
   const renderEditGrid = (sheetData) => {
     return (
-      <div className="overflow-auto bg-white h-full relative">
+      <div className="overflow-auto bg-white h-full relative" data-rh-scroll>
         <table className="w-full text-sm text-left border-collapse">
           <thead className="sticky top-0 z-20 bg-gray-100 shadow-sm ring-1 ring-gray-200">
             <tr>
@@ -555,8 +886,20 @@ export default function ReviewHub() {
           <tbody className="divide-y divide-gray-100">
             {sheetData.slice(2).map((row, rIdx) => {
               const actualRowIdx = rIdx + 2;
+              const isCommentedRow = commentRowSet.has(actualRowIdx);
+              const isBlinkRow = blinkTarget?.sheet === activeTab && blinkTarget?.idx === actualRowIdx;
+              const trClass = [
+                'group',
+                isCommentedRow ? 'bg-green-50 hover:bg-green-100/60 rh-row-commented' : 'hover:bg-blue-50',
+                isBlinkRow ? 'rh-row-blink' : ''
+              ].filter(Boolean).join(' ');
               return (
-                <tr key={actualRowIdx} className="hover:bg-blue-50 group">
+                <tr
+                  key={actualRowIdx}
+                  id={`rh-row-${actualRowIdx}`}
+                  className={trClass}
+                  title={isCommentedRow ? 'Ada komentar terbuka pada baris ini' : undefined}
+                >
                   <td className="px-1 py-1 text-center bg-gray-50 border-r">
                     <button
                       onClick={() => handleDeleteRow(activeTab, actualRowIdx)}
@@ -595,7 +938,7 @@ export default function ReviewHub() {
 
   return (
     <div className="bg-gray-100 flex-1 flex flex-col font-sans overflow-hidden absolute inset-0 top-[73px]">
-      
+
       {/* ── HEADER / STEPPER ── */}
       <header className="bg-white border-b px-6 py-2 flex flex-col sm:flex-row sm:items-center justify-between shrink-0 shadow-sm z-10 gap-2">
         <div>
@@ -603,14 +946,14 @@ export default function ReviewHub() {
             ReviewHub
             {openCommentsCount > 0 && selectedDoc && (
               <span className="bg-red-100 border border-red-200 text-red-700 text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1.5 shadow-sm font-semibold">
-                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span> 
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
                 {openCommentsCount} Komentar Terbuka
               </span>
             )}
           </h1>
           <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">{role} Workspace</p>
         </div>
-        
+
         {/* Stepper */}
         {selectedDoc && (
           <div className="flex items-center gap-1 sm:gap-2 bg-gray-50 p-1.5 rounded-lg border border-gray-100">
@@ -621,7 +964,7 @@ export default function ReviewHub() {
 
               let circleClass = "w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold border-2 transition-all ";
               let textClass = "text-[9px] font-bold mt-1 uppercase tracking-wide ";
-              
+
               if (isCurrent) {
                 circleClass += "bg-blue-600 border-blue-600 text-white shadow-md scale-110";
                 textClass += "text-blue-700";
@@ -652,7 +995,7 @@ export default function ReviewHub() {
       </header>
 
       <div className="flex flex-1 min-h-0 relative">
-        
+
         {/* ── LEFT PANEL (QUEUE) ── */}
         <div className={`flex flex-col bg-white border-r transition-all duration-300 ${queueOpen ? 'w-72' : 'w-12'} shrink-0 z-10 shadow-sm`}>
           <div className="p-3 flex justify-between items-center border-b">
@@ -661,23 +1004,50 @@ export default function ReviewHub() {
               {queueOpen ? '◀' : '▶'}
             </button>
           </div>
-          
+
           {queueOpen && isAdmin && (
             <div className="p-3 border-b bg-blue-50/30">
-              <label className="flex items-center justify-center w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 px-4 rounded-lg shadow-sm transition-colors cursor-pointer text-center">
-                <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                </svg>
-                Upload File Excel
-                <input type="file" accept=".xlsx" className="hidden" onChange={handleUploadExcel} disabled={loading} />
-              </label>
+              <div className="flex items-stretch gap-2">
+                {/* Upload PDF Laporan (moved from Dashboard) */}
+                <label className={`flex-1 min-w-0 flex items-center justify-center text-white text-xs font-bold py-2 px-2 rounded-lg shadow-sm transition-colors text-center leading-tight ${uploadingPdfFile ? 'bg-gray-400 cursor-not-allowed' : 'bg-brand-600 hover:bg-brand-700 cursor-pointer'}`}>
+                  {uploadingPdfFile ? (
+                    <svg className="w-4 h-4 mr-1.5 shrink-0 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4 mr-1.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                    </svg>
+                  )}
+                  {uploadingPdfFile ? 'Memproses...' : 'Upload File PDF'}
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    className="hidden"
+                    onChange={handlePdfUpload}
+                    disabled={!!uploadingPdfFile}
+                  />
+                </label>
+
+                {/* Upload File Excel */}
+                <label className="flex-1 min-w-0 flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 px-2 rounded-lg shadow-sm transition-colors cursor-pointer text-center leading-tight">
+                  <svg className="w-4 h-4 mr-1.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                  </svg>
+                  Upload File Excel
+                  <input type="file" accept=".xlsx" className="hidden" onChange={handleUploadExcel} disabled={loading} />
+                </label>
+              </div>
+              {pdfUploadError && (
+                <div className="text-xs text-rose-600 font-medium px-1 mt-2">{pdfUploadError}</div>
+              )}
             </div>
           )}
 
           {queueOpen && (
             <>
               <div className="p-3 border-b bg-gray-50/50">
-                <select 
+                <select
                   className="w-full text-xs p-2 border rounded-md bg-white shadow-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow font-semibold text-gray-700"
                   value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
                 >
@@ -689,33 +1059,33 @@ export default function ReviewHub() {
                 </select>
               </div>
               <div className="flex-1 overflow-y-auto">
-                {loading ? <div className="p-6 text-center text-xs text-gray-500 animate-pulse">Memuat data...</div> : 
+                {loading ? <div className="p-6 text-center text-xs text-gray-500 animate-pulse">Memuat data...</div> :
                   filteredDocs.length === 0 ? <div className="p-6 text-center text-xs text-gray-400">Tidak ada dokumen.</div> :
-                  filteredDocs.map(doc => {
-                    const docComments = comments.filter(c => c.document_id === doc.id && c.status === 'OPEN').length;
-                    const isSel = selectedDoc?.id === doc.id;
-                    return (
-                      <div 
-                        key={doc.id} 
-                        onClick={() => handleSelectDoc(doc)}
-                        className={`p-3.5 border-b cursor-pointer transition-all ${isSel ? 'bg-blue-50/50 border-l-4 border-l-blue-600' : 'border-l-4 border-l-transparent hover:bg-gray-50'}`}
-                      >
-                        <div className={`font-semibold text-sm truncate ${isSel ? 'text-blue-900' : 'text-gray-800'}`}>{doc.nama}</div>
-                        <div className="flex items-center justify-between mt-2">
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                            doc.status === 'POSTED' || doc.status === 'APPROVED' ? 'bg-green-50 text-green-700 border-green-200' :
-                            doc.status === 'REVISION_REQUESTED' || docComments > 0 ? 'bg-red-50 text-red-700 border-red-200' :
-                            doc.status === 'IN_REVIEW' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-                            'bg-gray-50 text-gray-600 border-gray-200'
-                          }`}>
-                            {(docComments > 0 && doc.status !== 'POSTED') ? 'REVISI' : (doc.status === 'POSTED' ? 'TERKIRIM' : doc.status)}
-                          </span>
-                          {docComments > 0 && <span className="text-[10px] font-bold bg-red-500 text-white px-2 py-0.5 rounded-full shadow-sm">{docComments}</span>}
+                    filteredDocs.map(doc => {
+                      const docComments = comments.filter(c => c.document_id === doc.id && c.status === 'OPEN').length;
+                      const isSel = selectedDoc?.id === doc.id;
+                      return (
+                        <div
+                          id={`queue-item-${doc.id}`}
+                          key={doc.id}
+                          onClick={() => handleSelectDocClick(doc)}
+                          className={`p-3.5 border-b cursor-pointer transition-all ${isSel ? 'bg-blue-50/50 border-l-4 border-l-blue-600' : 'border-l-4 border-l-transparent hover:bg-gray-50'}`}
+                        >
+                          <div className={`font-semibold text-sm truncate ${isSel ? 'text-blue-900' : 'text-gray-800'}`}>{doc.nama}</div>
+                          <div className="flex items-center justify-between mt-2">
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${doc.status === 'POSTED' || doc.status === 'APPROVED' ? 'bg-green-50 text-green-700 border-green-200' :
+                              doc.status === 'REVISION_REQUESTED' || docComments > 0 ? 'bg-red-50 text-red-700 border-red-200' :
+                                doc.status === 'IN_REVIEW' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                                  'bg-gray-50 text-gray-600 border-gray-200'
+                              }`}>
+                              {(docComments > 0 && doc.status !== 'POSTED') ? 'REVISI' : (doc.status === 'POSTED' ? 'TERKIRIM' : doc.status)}
+                            </span>
+                            {docComments > 0 && <span className="text-[10px] font-bold bg-red-500 text-white px-2 py-0.5 rounded-full shadow-sm">{docComments}</span>}
+                          </div>
+                          <div className="text-[10px] text-gray-400 mt-2 font-medium">Upd: {new Date(doc.updated_at).toLocaleString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
                         </div>
-                        <div className="text-[10px] text-gray-400 mt-2 font-medium">Upd: {new Date(doc.updated_at).toLocaleString('id-ID', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'})}</div>
-                      </div>
-                    )
-                  })
+                      )
+                    })
                 }
               </div>
             </>
@@ -726,10 +1096,10 @@ export default function ReviewHub() {
         <div className="flex-1 flex flex-col min-w-0 bg-transparent p-4 lg:p-6 overflow-hidden">
           {selectedDoc && excelData ? (
             <div className="flex-1 flex flex-col bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden h-full">
-              
+
               {/* Toolbar */}
               <div className="flex items-end justify-between px-2 pt-2 border-b bg-gray-50 gap-4">
-                
+
                 {/* Tabs */}
                 <div className="flex gap-1 overflow-x-auto pb-0">
                   {sheetTabs.map(t => {
@@ -765,7 +1135,7 @@ export default function ReviewHub() {
                   )}
 
                   {isAdmin && (
-                    <button 
+                    <button
                       onClick={handleSave} disabled={!hasUnsavedChanges || saving}
                       className={`text-xs font-bold py-1.5 px-4 rounded-md transition-all shadow-sm ${hasUnsavedChanges && !saving ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
                     >
@@ -774,7 +1144,7 @@ export default function ReviewHub() {
                   )}
 
                   {isAdmin && selectedDoc.status !== 'APPROVED' && selectedDoc.status !== 'POSTED' && (
-                    <button 
+                    <button
                       onClick={handleApprove} disabled={hasUnsavedChanges || openCommentsCount > 0 || processingAction === 'approve'}
                       className={`text-xs font-bold py-1.5 px-5 rounded-md transition-all shadow-sm ${(hasUnsavedChanges || openCommentsCount > 0) ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 text-white'}`}
                       title={hasUnsavedChanges ? 'Simpan perubahan terlebih dahulu' : openCommentsCount > 0 ? 'Selesaikan semua komentar terbuka terlebih dahulu' : 'Approve dokumen ini'}
@@ -784,7 +1154,7 @@ export default function ReviewHub() {
                   )}
 
                   {isKeuangan && (selectedDoc.status === 'APPROVED' || selectedDoc.status === 'POSTED') && (
-                    <button 
+                    <button
                       onClick={handleSend} disabled={processingAction === 'send'}
                       className="text-xs bg-[#0B3E1F] hover:bg-[#082d16] text-white font-bold py-1.5 px-5 rounded-md shadow-md disabled:opacity-50 transition-colors flex items-center gap-2"
                     >
@@ -846,15 +1216,15 @@ export default function ReviewHub() {
                   comments.map(c => {
                     const isOpen = c.status === 'OPEN';
                     return (
-                      <div key={c.id} className={`p-3.5 rounded-xl border text-xs transition-shadow ${isOpen ? 'bg-white border-amber-200 shadow-sm' : 'bg-gray-50 border-gray-200 opacity-70'}`}>
+                      <div id={`comment-${c.id}`} key={c.id} className={`p-3.5 rounded-xl border text-xs transition-shadow duration-500 ${isOpen ? 'bg-white border-amber-200 shadow-sm' : 'bg-gray-50 border-gray-200 opacity-70'}`}>
                         <div className="flex justify-between items-start mb-2.5">
                           <div>
                             <span className="font-bold text-gray-900">{c.profiles?.full_name}</span>
                             <span className="text-[9px] uppercase font-bold text-gray-500 ml-2 tracking-wide">{c.author_role}</span>
                           </div>
-                          <span className="text-[10px] text-gray-400 font-medium">{new Date(c.created_at).toLocaleDateString('id-ID', {day:'numeric', month:'short'})}</span>
+                          <span className="text-[10px] text-gray-400 font-medium">{new Date(c.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}</span>
                         </div>
-                        
+
                         {(c.jenis_komentar || c.sheet_name || c.target_cell) && (
                           <div className="mb-2.5 flex flex-wrap gap-1.5">
                             {c.jenis_komentar && <span className="bg-gray-100 text-gray-700 border border-gray-200 px-2 py-0.5 rounded text-[10px] font-semibold">{c.jenis_komentar.replace(/_/g, ' ')}</span>}
@@ -864,7 +1234,7 @@ export default function ReviewHub() {
                         )}
 
                         <p className="text-gray-800 leading-relaxed mb-3">{c.comment}</p>
-                        
+
                         {isOpen && isKeuangan && (
                           <button onClick={() => handleResolveComment(c.id)} className="w-full bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 py-1.5 rounded-lg font-bold transition-colors shadow-sm flex items-center justify-center gap-1">
                             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
@@ -876,7 +1246,12 @@ export default function ReviewHub() {
                             {c.jenis_komentar === 'BARIS_BELUM_ADA' && (
                               <button onClick={() => { setActiveTab(c.sheet_name || activeTab); setEditMode(true); handleAddRow(c.sheet_name || activeTab, -1, c.target_cell || ''); }} className="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 py-1.5 rounded-lg font-bold text-[11px] transition-colors shadow-sm">Buat Baris</button>
                             )}
-                            <button onClick={() => { setActiveTab(c.sheet_name || activeTab); setEditMode(true); }} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-1.5 rounded-lg font-bold text-[11px] transition-colors shadow-sm">Ke Sel / Sheet</button>
+                            <button onClick={() => handleGoToCell(c)} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-1.5 rounded-lg font-bold text-[11px] transition-colors shadow-sm">Ke Sel / Sheet</button>
+                          </div>
+                        )}
+                        {goToNotice?.commentId === c.id && (
+                          <div className="mt-2 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+                            {goToNotice.msg}
                           </div>
                         )}
                         {!isOpen && (
@@ -898,21 +1273,39 @@ export default function ReviewHub() {
                     <svg className="w-4 h-4 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                     Tambah Catatan Review
                   </div>
-                  
+
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Jenis</label>
-                    <select value={newCommentType} onChange={e=>setNewCommentType(e.target.value)} className="w-full text-xs border border-gray-300 rounded-lg p-2 bg-gray-50 outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 font-medium">
+                    <select value={newCommentType} onChange={e => setNewCommentType(e.target.value)} className="w-full text-xs border border-gray-300 rounded-lg p-2 bg-gray-50 outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 font-medium">
                       {COMMENT_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
                     </select>
                   </div>
-                  
+
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Target Cell / Referensi</label>
-                    <input 
-                      type="text" value={newCommentTarget} onChange={e=>setNewCommentTarget(e.target.value)}
+                    <div className="flex items-center justify-between">
+                      <label htmlFor="comment-target-input" className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Target Cell / Referensi</label>
+                      {newCommentTarget && (
+                        <button
+                          type="button"
+                          onClick={() => { autoTargetRef.current = null; setNewCommentTarget(''); }}
+                          className="text-[10px] font-semibold text-gray-400 hover:text-gray-600 transition-colors"
+                        >
+                          Hapus
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      id="comment-target-input"
+                      type="text" value={newCommentTarget}
+                      onChange={e => { autoTargetRef.current = null; setNewCommentTarget(e.target.value); }}
                       placeholder="misal: D15, Pendapatan"
-                      className="w-full text-xs border border-gray-300 rounded-lg p-2 bg-gray-50 outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 font-medium"
+                      className={`w-full text-xs border rounded-lg p-2 outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 font-medium transition-colors ${keuanganSelectedIdx >= 0 ? 'border-green-400 bg-green-50 text-green-900' : 'border-gray-300 bg-gray-50'}`}
                     />
+                    <p className={`text-[10px] leading-snug ${keuanganSelectedIdx >= 0 ? 'text-green-700 font-semibold' : 'text-gray-400'}`}>
+                      {keuanganSelectedIdx >= 0
+                        ? `✓ Terhubung ke baris di sheet ${activeTab}`
+                        : 'Klik baris pada tabel untuk mengisi otomatis, atau ketik manual.'}
+                    </p>
                   </div>
 
                   <div className="flex flex-col gap-1.5">
@@ -923,7 +1316,7 @@ export default function ReviewHub() {
                       className="w-full p-2.5 border border-gray-300 rounded-lg text-xs resize-none bg-gray-50 outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 font-medium"
                     />
                   </div>
-                  
+
                   <button type="submit" disabled={!newComment.trim() || commenting} className="mt-1 bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 rounded-lg text-xs transition-colors shadow-sm disabled:opacity-50">
                     {commenting ? 'Mengirim...' : 'Kirim Komentar'}
                   </button>
@@ -940,6 +1333,14 @@ export default function ReviewHub() {
         </div>
 
       </div>
+
+      {uploadingPdfFile && (
+        <PdfUploadProgressModal
+          file={uploadingPdfFile}
+          onClose={handleClosePdfModal}
+          onSuccess={handlePdfUploadSuccess}
+        />
+      )}
     </div>
   );
 }

@@ -5,6 +5,17 @@ import { DEPTH_COLORS, getDepthTint } from '../../lib/bi/depthColors.js';
 /** Solid gray for selected rows (same token the parent rows / sticky cells used before). */
 const SELECTED_ROW_BG = '#F3F4F6';
 
+/** LM view: neutral light-gray highlight for bold rows that carry numbers (gray-50 token, same as the header). */
+const LM_BOLD_ROW_BG = '#F9FAFB';
+/** LM view: thin line above highlighted bold rows (gray-300 token). */
+const LM_BOLD_ROW_LINE = '1px solid #D1D5DB';
+
+/** Table card views (persisted as ?view=, see useBIFilters). */
+const VIEW_OPTIONS = [
+  { key: 'analitik', label: 'Analitik', title: 'Analitik: hierarki, drilldown, dan perubahan %' },
+  { key: 'lm', label: 'LM', title: 'LM: format Laporan Manajemen' },
+];
+
 /**
  * DataTable — Multi-year financial data table with hierarchy, expand/collapse,
  * depth-based accent bars, YoY badges, optional RKAP column, quarterly mode,
@@ -29,6 +40,9 @@ const SELECTED_ROW_BG = '#F3F4F6';
  *   maxSelections: number (max selectable rows, default: 5)
  *   selectedRowKeys: Set<string>
  *   onRowSelect: (canonicalKey: string) => void
+ *   view: 'analitik' | 'lm' (table view, default 'analitik')
+ *   onViewChange: (view) => void (renders the Analitik | LM toggle when provided)
+ *   lmRows: Array<{ id, label, bold, values, rkap }> | null (Laporan Manajemen rows for the active mode)
  */
 
 export default function DataTable({
@@ -48,7 +62,11 @@ export default function DataTable({
   onRowSelect,
   canReset = false,
   onReset,
+  view = 'analitik',
+  onViewChange,
+  lmRows = null,
 }) {
+  const isLM = view === 'lm' && Array.isArray(lmRows);
   const isQuarterly = mode === 'quarterly';
   const isYTD = mode === 'ytd';
   const isMonthly = mode === 'monthly';
@@ -76,7 +94,8 @@ export default function DataTable({
   // In monthly mode, only show RKAP column when the selected year matches the RKAP year
   const monthlyYear = isMonthly && monthlyData?.rows?.[0]?.values ? Object.keys(monthlyData.rows[0].values).length : null;
   const showRkapInMode = isMonthly ? (selectedYear === rkapYear) : true;
-  const hasRkap = showRkapInMode && rkapYear && activeRows.some(r => r.rkap && r.rkap[rkapYear] !== null && r.rkap[rkapYear] !== undefined);
+  const rkapSourceRows = isLM ? lmRows : activeRows;
+  const hasRkap = showRkapInMode && rkapYear && rkapSourceRows.some(r => r.rkap && r.rkap[rkapYear] !== null && r.rkap[rkapYear] !== undefined);
 
   const isHierarchical = activeRows.some(r => r.depth !== undefined);
 
@@ -135,6 +154,11 @@ export default function DataTable({
 
   const headerScrollRef = useRef(null);
 
+  // The body is re-mounted on view switch (fade) and starts at scrollLeft 0 — keep the header in sync.
+  useEffect(() => {
+    if (headerScrollRef.current) headerScrollRef.current.scrollLeft = 0;
+  }, [isLM]);
+
   // ── Optional: highlight column matching global selectedYear ──
   const isYearHighlighted = useCallback((colKey) => {
     if (!selectedYear) return false;
@@ -145,9 +169,17 @@ export default function DataTable({
     return false;
   }, [selectedYear, useColumnar]);
 
+  // LM view: template rows filtered by the topbar search ("Cari Uraian")
+  const lmVisibleRows = isLM
+    ? (searchTerm ? lmRows.filter(r => r.label.toLowerCase().includes(searchTerm.toLowerCase())) : lmRows)
+    : [];
+  const valueColumnKeys = useColumnar ? namedColumns.map(col => col.key) : sortedYears;
+  // Uraian column: sticky in columnar modes (existing behavior) and always in LM
+  const stickyUraian = useColumnar || isLM;
+
   const colGroup = (
     <colgroup>
-      <col style={{ width: '280px', minWidth: '280px' }} />
+      <col style={isLM ? { width: '320px', minWidth: '320px' } : { width: '280px', minWidth: '280px' }} />
       {hasRkap && <col style={{ width: '110px', minWidth: '110px' }} />}
       {useColumnar ? (
         namedColumns.map(col => <col key={col.key} style={{ width: '110px', minWidth: '110px' }} />)
@@ -165,7 +197,7 @@ export default function DataTable({
           <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
-          <span className="text-sm font-semibold text-gray-900">{sectionLabel || title}</span>
+          <span className="text-sm font-semibold text-gray-900">{isLM ? `Laporan Manajemen · ${title}` : (sectionLabel || title)}</span>
         </div>
         <div className="flex items-center gap-3">
           {canReset && onReset && (
@@ -180,6 +212,7 @@ export default function DataTable({
               Reset
             </button>
           )}
+          {onViewChange && <TableViewToggle value={isLM ? 'lm' : 'analitik'} onChange={onViewChange} />}
           <span className="text-xs text-gray-400">Reporting Currency: <strong className="text-gray-600">IDR</strong></span>
         </div>
       </div>
@@ -197,9 +230,9 @@ export default function DataTable({
               <th
                 className="px-5 py-3 text-left text-xs font-semibold text-gray-400"
                 style={{
-                  position: useColumnar ? 'sticky' : 'static',
-                  left: useColumnar ? 0 : undefined,
-                  zIndex: useColumnar ? 30 : 20,
+                  position: stickyUraian ? 'sticky' : 'static',
+                  left: stickyUraian ? 0 : undefined,
+                  zIndex: stickyUraian ? 30 : 20,
                   backgroundColor: '#F9FAFB'
                 }}
               >
@@ -240,9 +273,10 @@ export default function DataTable({
         </table>
       </div>
 
-      {/* Table Body */}
+      {/* Table Body — re-mounted per view for a short fade (see .table-view-fade) */}
       <div
-        className="overflow-x-auto"
+        key={isLM ? 'lm' : 'analitik'}
+        className="overflow-x-auto table-view-fade"
         onScroll={(e) => {
           if (headerScrollRef.current) {
             headerScrollRef.current.scrollLeft = e.target.scrollLeft;
@@ -251,127 +285,243 @@ export default function DataTable({
       >
         <table className="w-full text-sm table-fixed" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
           {colGroup}
-          <tbody>
-            {renderRows.map((row, i) => {
-              const depth = row.depth ?? 0;
-              const hasChildren = row.hasChildren ?? false;
-              const hasAccent = hasChildren || (row.accent === true);
-              const isExpanded = expandedRows.has(row.id);
-              const isVisible = searchTerm ? true : isRowVisible(row);
-              const accentColor = row.color || (hasAccent ? DEPTH_COLORS[depth] || null : null);
+          {isLM ? (
+            <tbody>
+              {lmVisibleRows.map(row => {
+                const hasAnyValue = (hasRkap && isPresent(row.rkap?.[rkapYear]))
+                  || valueColumnKeys.some(k => isPresent(row.values?.[k]));
+                // Bold row without numbers = block title: no numbers, no dash, no highlight
+                const isBlockTitle = row.bold && !hasAnyValue;
+                const isHighlighted = row.bold && hasAnyValue;
+                const bg = isHighlighted ? LM_BOLD_ROW_BG : '#FFFFFF';
+                const cellStyle = isHighlighted ? { borderTop: LM_BOLD_ROW_LINE } : undefined;
 
-              const indentPx = isHierarchical ? depth * 12 : (row.isTotal ? 0 : 12);
-              const isSelected = selectedRowKeys && selectedRowKeys.has(row.canonical);
-              const isMaxReached = selectedRowKeys && maxSelections && selectedRowKeys.size >= maxSelections;
-              const isDisabled = !isSelected && isMaxReached;
-
-              // Background follows the selection only: white when unselected (parents
-              // included), solid gray when selected (parent or leaf). The sticky Uraian
-              // cell uses the same opaque color so scrolled numbers never show through.
-              const rowBg = isSelected ? SELECTED_ROW_BG : '#FFFFFF';
-              const stickyBg = rowBg;
-              const pyClass = isVisible ? (hasChildren ? 'py-2' : 'py-1.5') : 'py-0';
-
-              let rowClasses = `transition-colors ${isVisible ? 'border-b border-gray-200' : 'border-none'}`;
-              if (isDisabled) {
-                rowClasses += ' cursor-not-allowed';
-              } else if (isVisible) {
-                rowClasses += ' cursor-pointer';
-              }
-              if (!isSelected && !isDisabled) {
-                rowClasses += ' hover:bg-gray-50';
-              }
-
-              return (
-                <tr
-                  key={row.id || row.canonical || i}
-                  className={rowClasses}
-                  style={{ backgroundColor: isSelected ? SELECTED_ROW_BG : undefined }}
-                  onClick={() => { if (isVisible && onRowSelect && !isDisabled) onRowSelect(row.canonical); }}
-                  title={isDisabled ? `Maksimal ${maxSelections} pilihan. Unselect salah satu untuk memilih yang lain.` : undefined}
-                >
-                  {/* Uraian */}
-                  <td
-                    className={`px-5 relative transition-all duration-200 ease-in-out ${pyClass}`}
-                    style={useColumnar ? {
-                      position: 'sticky', left: 0, zIndex: 10, backgroundColor: stickyBg
-                    } : {}}
-                  >
-                    {accentColor && (
-                      <div
-                        className={`absolute left-0 top-0 bottom-0 transition-all ${isSelected ? 'w-2' : 'w-1'}`}
-                        style={{ backgroundColor: accentColor }}
-                      />
-                    )}
-                    <div
-                      className={`transition-all duration-200 ease-in-out overflow-hidden flex items-center gap-1.5 ${isVisible ? 'max-h-[100px] opacity-100' : 'max-h-0 opacity-0'}`}
-                      style={{ paddingLeft: `${indentPx}px` }}
+                return (
+                  <tr key={row.id} className="border-b border-gray-200" style={{ backgroundColor: bg }}>
+                    {/* Uraian — template label, sticky + opaque */}
+                    <td
+                      className="px-5 py-1.5"
+                      style={{ position: 'sticky', left: 0, zIndex: 10, backgroundColor: bg, ...cellStyle }}
                     >
-                      {hasChildren ? (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); toggleExpand(row.id); }}
-                          className="w-5 h-5 flex items-center justify-center rounded hover:bg-gray-200 transition-colors flex-shrink-0"
-                          aria-label={isExpanded ? 'Collapse' : 'Expand'}
-                        >
-                          <svg
-                            className={`w-3 h-3 text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}
-                            fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                          >
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
-                          </svg>
-                        </button>
-                      ) : (
-                        isHierarchical && <div className="w-5 h-5 flex-shrink-0" />
-                      )}
                       <span
-                        className={`truncate ${hasAccent ? 'font-bold text-gray-900' : 'text-gray-600'}`}
-                        title={row.name}
+                        className={row.bold ? 'font-bold text-gray-900' : 'text-gray-600'}
+                        title={row.label}
+                        style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
                       >
-                        {row.name}
+                        {row.label}
                       </span>
-                    </div>
-                  </td>
+                    </td>
 
-                  {/* RKAP Column */}
-                  {hasRkap && (
-                    <td className={`px-2 text-right tabular-nums whitespace-nowrap transition-all duration-200 ease-in-out ${pyClass}`}>
-                      <div className={`transition-all duration-200 ease-in-out overflow-hidden flex justify-end ${isVisible ? 'max-h-[100px] opacity-100' : 'max-h-0 opacity-0'}`}>
-                        <CellValue value={row.rkap?.[rkapYear]} />
+                    {hasRkap && (
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap" style={cellStyle}>
+                        <LMCellValue value={row.rkap?.[rkapYear]} hidden={isBlockTitle} bold={row.bold} />
+                      </td>
+                    )}
+
+                    {valueColumnKeys.map(k => (
+                      <td key={k} className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap" style={cellStyle}>
+                        <LMCellValue value={row.values?.[k]} hidden={isBlockTitle} bold={row.bold} />
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          ) : (
+            <tbody>
+              {renderRows.map((row, i) => {
+                const depth = row.depth ?? 0;
+                const hasChildren = row.hasChildren ?? false;
+                const hasAccent = hasChildren || (row.accent === true);
+                const isExpanded = expandedRows.has(row.id);
+                const isVisible = searchTerm ? true : isRowVisible(row);
+                const accentColor = row.color || (hasAccent ? DEPTH_COLORS[depth] || null : null);
+
+                const indentPx = isHierarchical ? depth * 12 : (row.isTotal ? 0 : 12);
+                const isSelected = selectedRowKeys && selectedRowKeys.has(row.canonical);
+                const isMaxReached = selectedRowKeys && maxSelections && selectedRowKeys.size >= maxSelections;
+                const isDisabled = !isSelected && isMaxReached;
+
+                // Background follows the selection only: white when unselected (parents
+                // included), solid gray when selected (parent or leaf). The sticky Uraian
+                // cell uses the same opaque color so scrolled numbers never show through.
+                const rowBg = isSelected ? SELECTED_ROW_BG : '#FFFFFF';
+                const stickyBg = rowBg;
+                const pyClass = isVisible ? (hasChildren ? 'py-2' : 'py-1.5') : 'py-0';
+
+                let rowClasses = `transition-colors ${isVisible ? 'border-b border-gray-200' : 'border-none'}`;
+                if (isDisabled) {
+                  rowClasses += ' cursor-not-allowed';
+                } else if (isVisible) {
+                  rowClasses += ' cursor-pointer';
+                }
+                if (!isSelected && !isDisabled) {
+                  rowClasses += ' hover:bg-gray-50';
+                }
+
+                return (
+                  <tr
+                    key={row.id || row.canonical || i}
+                    className={rowClasses}
+                    style={{ backgroundColor: isSelected ? SELECTED_ROW_BG : undefined }}
+                    onClick={() => { if (isVisible && onRowSelect && !isDisabled) onRowSelect(row.canonical); }}
+                    title={isDisabled ? `Maksimal ${maxSelections} pilihan. Unselect salah satu untuk memilih yang lain.` : undefined}
+                  >
+                    {/* Uraian */}
+                    <td
+                      className={`px-5 relative transition-all duration-200 ease-in-out ${pyClass}`}
+                      style={useColumnar ? {
+                        position: 'sticky', left: 0, zIndex: 10, backgroundColor: stickyBg
+                      } : {}}
+                    >
+                      {accentColor && (
+                        <div
+                          className={`absolute left-0 top-0 bottom-0 transition-all ${isSelected ? 'w-2' : 'w-1'}`}
+                          style={{ backgroundColor: accentColor }}
+                        />
+                      )}
+                      <div
+                        className={`transition-all duration-200 ease-in-out overflow-hidden flex items-center gap-1.5 ${isVisible ? 'max-h-[100px] opacity-100' : 'max-h-0 opacity-0'}`}
+                        style={{ paddingLeft: `${indentPx}px` }}
+                      >
+                        {hasChildren ? (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); toggleExpand(row.id); }}
+                            className="w-5 h-5 flex items-center justify-center rounded hover:bg-gray-200 transition-colors flex-shrink-0"
+                            aria-label={isExpanded ? 'Collapse' : 'Expand'}
+                          >
+                            <svg
+                              className={`w-3 h-3 text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}
+                              fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+                            </svg>
+                          </button>
+                        ) : (
+                          isHierarchical && <div className="w-5 h-5 flex-shrink-0" />
+                        )}
+                        <span
+                          className={`truncate ${hasAccent ? 'font-bold text-gray-900' : 'text-gray-600'}`}
+                          title={row.name}
+                        >
+                          {row.name}
+                        </span>
                       </div>
                     </td>
-                  )}
 
-                  {/* Value Columns */}
-                  {useColumnar ? (
-                    namedColumns.map(col => (
-                      <td
-                        key={col.key}
-                        className={`px-2 text-right tabular-nums whitespace-nowrap transition-all duration-200 ease-in-out ${pyClass}`}
-                      >
+                    {/* RKAP Column */}
+                    {hasRkap && (
+                      <td className={`px-2 text-right tabular-nums whitespace-nowrap transition-all duration-200 ease-in-out ${pyClass}`}>
                         <div className={`transition-all duration-200 ease-in-out overflow-hidden flex justify-end ${isVisible ? 'max-h-[100px] opacity-100' : 'max-h-0 opacity-0'}`}>
-                          <CellValue value={row.values[col.key]} yoy={row.yoyChanges?.[col.key]} />
+                          <CellValue value={row.rkap?.[rkapYear]} />
                         </div>
                       </td>
-                    ))
-                  ) : (
-                    sortedYears.map(y => (
-                      <td
-                        key={y}
-                        className={`px-2 text-right tabular-nums whitespace-nowrap transition-all duration-200 ease-in-out ${pyClass}`}
-                      >
-                        <div className={`transition-all duration-200 ease-in-out overflow-hidden flex justify-end ${isVisible ? 'max-h-[100px] opacity-100' : 'max-h-0 opacity-0'}`}>
-                          <CellValue value={row.values[y]} yoy={row.yoyChanges?.[y]} />
-                        </div>
-                      </td>
-                    ))
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
+                    )}
+
+                    {/* Value Columns */}
+                    {useColumnar ? (
+                      namedColumns.map(col => (
+                        <td
+                          key={col.key}
+                          className={`px-2 text-right tabular-nums whitespace-nowrap transition-all duration-200 ease-in-out ${pyClass}`}
+                        >
+                          <div className={`transition-all duration-200 ease-in-out overflow-hidden flex justify-end ${isVisible ? 'max-h-[100px] opacity-100' : 'max-h-0 opacity-0'}`}>
+                            <CellValue value={row.values[col.key]} yoy={row.yoyChanges?.[col.key]} />
+                          </div>
+                        </td>
+                      ))
+                    ) : (
+                      sortedYears.map(y => (
+                        <td
+                          key={y}
+                          className={`px-2 text-right tabular-nums whitespace-nowrap transition-all duration-200 ease-in-out ${pyClass}`}
+                        >
+                          <div className={`transition-all duration-200 ease-in-out overflow-hidden flex justify-end ${isVisible ? 'max-h-[100px] opacity-100' : 'max-h-0 opacity-0'}`}>
+                            <CellValue value={row.values[y]} yoy={row.yoyChanges?.[y]} />
+                          </div>
+                        </td>
+                      ))
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          )}
         </table>
       </div>
     </div>
+  );
+}
+
+function isPresent(value) {
+  return value !== null && value !== undefined && !Number.isNaN(value);
+}
+
+/**
+ * Analitik | LM segmented control (same look as the period-mode toggle in the Topbar).
+ * Compact height + negative margin so the sticky card header keeps its height.
+ */
+function TableViewToggle({ value, onChange }) {
+  const handleKeyDown = (e) => {
+    const idx = VIEW_OPTIONS.findIndex(o => o.key === value);
+    let nextIdx = null;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') nextIdx = (idx + 1) % VIEW_OPTIONS.length;
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') nextIdx = (idx - 1 + VIEW_OPTIONS.length) % VIEW_OPTIONS.length;
+    if (nextIdx === null) return;
+    e.preventDefault();
+    onChange(VIEW_OPTIONS[nextIdx].key);
+    e.currentTarget.querySelectorAll('[role="radio"]')[nextIdx]?.focus();
+  };
+
+  return (
+    <div className="flex items-center gap-1.5 flex-shrink-0">
+      <span className="text-xs text-gray-500 font-medium whitespace-nowrap select-none">
+        Format Table View:
+      </span>
+      <div
+        className="flex items-center rounded-lg border border-gray-200 overflow-hidden flex-shrink-0 -my-0.5"
+        role="radiogroup"
+        aria-label="Tampilan tabel"
+        onKeyDown={handleKeyDown}
+        style={{ height: '24px' }}
+      >
+        {VIEW_OPTIONS.map(o => {
+          const active = value === o.key;
+          return (
+            <button
+              key={o.key}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              tabIndex={active ? 0 : -1}
+              title={o.title}
+              onClick={() => { if (!active) onChange(o.key); }}
+              className={`h-full px-2.5 text-[11px] font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-[#2FA84A]/50 focus-visible:ring-inset ${active
+                ? 'bg-[#2FA84A] text-white'
+                : 'text-gray-500 hover:bg-gray-50'
+                }`}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** LM cell: compact single-line value, same number format as Analitik, no % badge. */
+function LMCellValue({ value, hidden = false, bold = false }) {
+  if (hidden) return null;
+  if (!isPresent(value)) {
+    return <span className="text-gray-300">–</span>;
+  }
+  const str = formatCompact(value);
+  const match = str.match(/^(.*?)(Rb|Jt|M|T)$/);
+  return (
+    <span className={`text-gray-900 ${bold ? 'font-bold' : ''}`} title={formatFull(value)}>
+      {match ? <>{match[1]}<span className="text-[0.8em]">{match[2]}</span></> : str}
+    </span>
   );
 }
 
